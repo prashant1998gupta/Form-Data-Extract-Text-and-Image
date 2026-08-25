@@ -161,6 +161,35 @@ export async function decodeImage(bytes: Uint8Array, options: DecodeOptions = {}
 }
 
 /**
+ * Decodes the capture at its NATIVE resolution, EXIF orientation applied.
+ *
+ * The counterpart to `decodeImage`, which deliberately downscales: analysis
+ * wants 2400 px because that is fast and sufficient, while the delivered
+ * passport photograph wants every pixel the phone captured. Both come from the
+ * same bytes and must agree about orientation, so the `.rotate()` here is the
+ * same one and is not optional.
+ *
+ * Costs a second decode of the same JPEG — about 300 ms on a 12 MP capture, and
+ * roughly 36 MB of RGB held while the crop is warped out of it. Call it only
+ * when there is a crop to take, and only when `decodeImage` actually downscaled
+ * something; on a capture already at or below the working edge this returns
+ * pixels identical to ones already in hand.
+ */
+export async function decodeFullRgb(bytes: Uint8Array): Promise<Rgb> {
+  const { data, info } = await sharp(Buffer.from(bytes), {
+    limitInputPixels: MAX_INPUT_PIXELS,
+    sequentialRead: true,
+  })
+    .rotate()
+    .flatten({ background: "#ffffff" })
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  return rgbFrom(new Uint8ClampedArray(data.buffer, data.byteOffset, data.byteLength), info.width, info.height, 3);
+}
+
+/**
  * Cuts a region out of the ORIGINAL bytes at full resolution.
  *
  * This is the whole reason `DecodedImage.scale` is carried around. Detection

@@ -53,6 +53,25 @@ export interface TextLineOptions {
  * want to keep them as registration anchors.
  */
 export function printedCaptionLabels(components: readonly Component[], options: TextLineOptions): Set<number> {
+  const removed = new Set<number>();
+  for (const run of printedTextRuns(components, options)) {
+    for (const glyph of run) removed.add(glyph.label);
+  }
+  return removed;
+}
+
+/**
+ * The runs of set type themselves, in the order they were found.
+ *
+ * Same structural test as `printedCaptionLabels`, which is a thin wrapper over
+ * this — but the runs carry information the label set throws away, namely HOW
+ * MANY separate lines of type are present and where they sit. That count is
+ * what tells a caller whether it is looking at a printed form at all, which is
+ * a different question from which glyphs to delete, and it is asked at a
+ * different glyph size: form labels are 3-4 mm where captions are 2.5 mm and
+ * under, so the caller supplies its own bounds.
+ */
+export function printedTextRuns(components: readonly Component[], options: TextLineOptions): Component[][] {
   const {
     pxPerMM,
     maxGlyphHeightMM = 2.5,
@@ -70,7 +89,7 @@ export function printedCaptionLabels(components: readonly Component[], options: 
   const minSpan = minSpanMM * pxPerMM;
 
   const glyphs = components.filter((c) => c.bounds.height <= maxHeight && c.bounds.width <= maxWidth);
-  if (glyphs.length < minGlyphs) return new Set();
+  if (glyphs.length < minGlyphs) return [];
 
   // Group by baseline — the BOTTOM edge, not the centre. Set type aligns on its
   // baseline; letters with descenders and ascenders have quite different
@@ -89,7 +108,7 @@ export function printedCaptionLabels(components: readonly Component[], options: 
     else byBaseline.set(baseline, [glyph]);
   }
 
-  const removed = new Set<number>();
+  const runs: Component[][] = [];
 
   for (const bucket of byBaseline.values()) {
     if (bucket.length < minGlyphs) continue;
@@ -113,7 +132,7 @@ export function printedCaptionLabels(components: readonly Component[], options: 
       const mean = heights.reduce((sum, h) => sum + h, 0) / heights.length;
       const deviation = Math.sqrt(heights.reduce((sum, h) => sum + (h - mean) ** 2, 0) / heights.length);
       if (mean > 0 && deviation / mean > 0.45) return;
-      for (const glyph of run) removed.add(glyph.label);
+      runs.push(run);
     };
 
     for (let i = 1; i < ordered.length; i += 1) {
@@ -129,5 +148,5 @@ export function printedCaptionLabels(components: readonly Component[], options: 
     flush();
   }
 
-  return removed;
+  return runs;
 }

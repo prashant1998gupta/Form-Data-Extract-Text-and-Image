@@ -2,6 +2,8 @@
 
 import { useCallback, useRef, useState } from "react";
 
+import { prepareUpload, UploadPrepareError } from "@/lib/client/prepare-upload";
+
 /**
  * The verification screen: original form on the left, extracted elements on the
  * right (spec §4).
@@ -40,6 +42,7 @@ type Region = {
 type Result = {
   template: { id: string; name: string };
   page: { method: string; confidence: number; reason: string; skewDegrees: number };
+  formPresence: { recognised: boolean; detail: string; textLines: number; rules: number };
   rectified: { width: number; height: number; pxPerMM: number; dataUrl: string };
   regions: Region[];
   fieldsWithoutGeometry: string[];
@@ -54,6 +57,43 @@ const REASON_TEXT: Record<string, string> = {
 };
 
 const ACCEPTED = "image/jpeg,image/png,image/webp";
+
+/**
+ * Reads a JSON body without assuming there is one.
+ *
+ * Not every reply comes from this application. A request rejected by the
+ * platform edge — an oversized body, a gateway timeout, a cold-start failure —
+ * answers in plain text, and calling `.json()` on it throws. That throw used to
+ * land in the same catch as a dropped connection and report "the upload did not
+ * reach the server", which is a false diagnosis of a request that arrived
+ * perfectly well and was refused on arrival.
+ */
+async function readJson(response: Response): Promise<{ error?: string } | null> {
+  try {
+    return (await response.json()) as { error?: string };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What to say when the reply carried no message of ours.
+ *
+ * These are the edge's own failures, phrased as an instruction the person
+ * holding the paper form can actually act on.
+ */
+function statusMessage(status: number): string {
+  if (status === 413) {
+    return "That photo was too large to upload. Photograph the form again at a lower resolution.";
+  }
+  if (status === 504 || status === 408) {
+    return "The form took too long to process. Try again, or photograph it with the whole page in frame.";
+  }
+  if (status >= 500) {
+    return "The server could not process the form. Please try again in a moment.";
+  }
+  return "The form could not be processed.";
+}
 
 export default function ScanWorkbench() {
   const [busy, setBusy] = useState(false);
@@ -72,18 +112,46 @@ export default function ScanWorkbench() {
     setError(null);
 
     try {
+      // Resize BEFORE the request exists. The platform rejects an oversized body
+      // at the edge, so there is no server-side handling that could rescue it.
+      const prepared = await prepareUpload(file);
+
       const body = new FormData();
-      body.append("image", file);
-      const response = await fetch("/api/extract", { method: "POST", body });
-      const payload = await response.json();
-      if (!response.ok) {
-        setError(payload.error ?? "The form could not be processed.");
+      body.append("image", prepared.file);
+
+      let response: Response;
+      try {
+        response = await fetch("/api/extract", { method: "POST", body });
+      } catch {
+        // The ONLY genuine network failure. Everything below this point got a
+        // reply from something, and blaming the operator's connection for a
+        // reply we did receive sends them to go and restart a working router.
+        setError("The upload did not reach the server. Check your connection and try again.");
         setResult(null);
         return;
       }
+
+      const payload = await readJson(response);
+
+      if (!response.ok) {
+        setError(payload?.error ?? statusMessage(response.status));
+        setResult(null);
+        return;
+      }
+      if (!payload) {
+        setError("The server's reply could not be read. Please try again.");
+        setResult(null);
+        return;
+      }
+
       setResult(payload as Result);
-    } catch {
-      setError("The upload did not reach the server. Check your connection and try again.");
+    } catch (cause) {
+      setError(
+        cause instanceof UploadPrepareError
+          ? cause.message
+          : "The photo could not be prepared for upload. Please try again.",
+      );
+      setResult(null);
     } finally {
       inFlight.current = false;
       setBusy(false);
@@ -257,9 +325,28 @@ export default function ScanWorkbench() {
             </span>
           </header>
           <div className="pane-body">
+            {/* Stated ONCE, above the fields, when the capture is not a form.
+                Three fields each saying the same thing reads as three separate
+                failures of the product; one sentence naming what was measured
+                reads as what it is — the wrong photograph. */}
+            {!result.formPresence.recognised ? (
+              <p className="notice warn" role="alert" style={{ marginBottom: 16 }}>
+                <strong>This does not look like the form.</strong> No fields were read, because{" "}
+                {result.formPresence.detail}. Photograph the printed form with the whole page in
+                frame.
+              </p>
+            ) : null}
+
             <div className="regions">
               {regions.map((region) => (
-                <RegionCard key={region.fieldId} region={region} />
+                <RegionCard
+                  key={region.fieldId}
+                  region={region}
+                  // The banner above already gave the measurement. Repeating it
+                  // on all three cards turns one problem into what reads as
+                  // three, and buries the one instruction that matters.
+                  suppressDetail={!result.formPresence.recognised}
+                />
               ))}
             </div>
 
@@ -290,7 +377,7 @@ export default function ScanWorkbench() {
   );
 }
 
-function RegionCard({ region }: { region: Region }) {
+function RegionCard({ region, suppressDetail = false }: { region: Region; suppressDetail?: boolean }) {
   return (
     <article className={`region${region.needsReview ? " needs-review" : ""}`}>
       <div className={`crop${region.found ? "" : " is-missing"}`}>
@@ -322,7 +409,7 @@ function RegionCard({ region }: { region: Region }) {
         ) : (
           <>
             <p>{REASON_TEXT[region.reason ?? ""] ?? "This element could not be located."}</p>
-            {region.detail ? (
+            {region.detail && !suppressDetail ? (
               <p style={{ color: "var(--muted)", fontSize: 12 }}>{region.detail}</p>
             ) : null}
           </>

@@ -28,7 +28,7 @@ spec rather than a sketch.
 ```bash
 npm install
 npm run dev            # http://localhost:3000 — upload a form, see the crops
-npm test               # 127 tests
+npm test               # 135 tests
 npm run build
 
 node --experimental-strip-types scripts/demo-extract.ts    # crops to disk, scored
@@ -61,6 +61,18 @@ A miss is visible on the verification screen and takes one drag to fix. A
 plausible wrong crop slips through review and lands in a patient record. So the
 acceptance gate is conjunctive and deliberately biased toward refusing, and
 "Not Detected" is an asserted conclusion with a stated reason — never a shrug.
+
+Which is exactly why **absence is only asserted once presence has been
+established**. A refusal that is confidently wrong spends the same trust a wrong
+crop does, one step earlier: told "the box was located and is empty" about a
+page that was never a form, staff learn to discount every refusal the product
+makes. So [`lib/regions/form-presence.ts`](lib/regions/form-presence.ts) checks
+that the capture carries printed structure — lines of set type, or printed rules
+— before any detector is addressed by template coordinates, and reports what it
+measured when it does not. The bar is deliberately on the floor, three of
+either: a wrong refusal here would reject a real patient's real form, which is
+worse than the bug it prevents. Every sample form clears it five times over, and
+the unfilled form still reports its three honest empty boxes.
 
 Four more, in [`lib/regions/params.ts`](lib/regions/params.ts):
 
@@ -219,6 +231,8 @@ crashing. The most instructive:
 ## Layout
 
 ```
+lib/client/      capture preparation in the browser (resize, HEIC via the
+                 platform decoder) — Vercel rejects a body over 4.5 MB at the edge
 lib/vision/      pure-TS image primitives, browser+server isomorphic
                  types gray integral threshold morphology components
                  geometry lines colour cluster thinning features
@@ -227,10 +241,11 @@ lib/vision/      pure-TS image primitives, browser+server isomorphic
 lib/geometry/    Canonical Template Space — everything persisted is in mm
 lib/ink/         paper statistics, photometric normalisation, caption removal
 lib/regions/     photo · signature · thumb · postprocess · params
+                 form-presence (is this a printed form at all?)
 lib/templates/   form definition; the hospital form is its first tenant
 lib/pipeline/    bytes -> crops, driven by a template
 app/             verification screen + /api/extract
-tests/           127 tests + the synthetic form generator
+tests/           135 tests + the synthetic form generator
 scripts/         demo-extract, preview-fixture
 docs/            product spec, architecture build spec
 ```

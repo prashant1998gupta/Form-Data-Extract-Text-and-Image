@@ -30,17 +30,18 @@ import {
   PHOTO_SIZES,
   type RectMM,
 } from "../geometry/frames.ts";
-import { decodeImage, type DecodedImage } from "../vision/io.ts";
-import { detectPageQuad, rectifyPage, type PageDetection } from "../vision/page.ts";
-import { toGray } from "../vision/gray.ts";
+import { decodeFullRgb, decodeImage, type DecodedImage } from "../vision/io.ts";
+import { detectPageQuad, type PageDetection } from "../vision/page.ts";
 import { warpQuadRgb } from "../vision/warp-rgb.ts";
+import { applyHomography, estimateHomography, multiply3 } from "../vision/geometry.ts";
 import { detectPhoto } from "../regions/photo.ts";
 import { detectSignature } from "../regions/signature.ts";
 import { detectThumb } from "../regions/thumb.ts";
-import { renderPhotoCrop, renderSignatureCrop } from "../regions/postprocess.ts";
+import { renderPhotoCrop, renderSignatureCrop, type PhotoSource } from "../regions/postprocess.ts";
+import { assessFormPresence, type FormPresence } from "../regions/form-presence.ts";
 import { REGION_PARAMS, type AbsenceReason, type GateClause } from "../regions/params.ts";
 import { allFields, imageFields, isImageField, type FormField, type FormTemplate } from "../templates/types.ts";
-import type { Quad, Rect, Rgb } from "../vision/types.ts";
+import type { Matrix3, Point, Quad, Rect, Rgb } from "../vision/types.ts";
 
 export interface RegionResult {
   readonly fieldId: string;
@@ -78,6 +79,13 @@ export interface ExtractionResult {
   readonly timings: Readonly<Record<string, number>>;
   /** Fields the template declares but has no geometry for. */
   readonly fieldsWithoutGeometry: readonly string[];
+  /**
+   * Whether the capture carries enough printed structure to be addressed by
+   * template coordinates at all. When it does not, no detector runs: see
+   * `lib/regions/form-presence.ts` for why a refusal is worse than useless if
+   * the page it describes was never there.
+   */
+  readonly formPresence: FormPresence;
 }
 
 export interface ExtractOptions {
@@ -115,8 +123,14 @@ export async function extractRegions(
 
   // Rectify to the Canonical Template Space raster, so a millimetre is the same
   // number of pixels regardless of how the page was captured.
+  // The quad in WORKING pixels that the rectified page was sampled from. Kept
+  // because it is exactly the mapping needed to go back the other way, from a
+  // coordinate measured on the rectified page to the pixels of the original
+  // capture — which is how the delivered photograph gets its full resolution.
+  let pageSourceQuad: Quad;
   let rectified: Rgb;
   if (detection.method === "perspective") {
+    pageSourceQuad = detection.quad;
     rectified = warpQuadRgb(decoded.rgb, detection.quad, cts.width, cts.height);
   } else {
     // No usable page boundary — a scan, or a capture cropped to the page. The
@@ -153,10 +167,9 @@ export async function extractRegions(
       br: corner(cts.width, cts.height),
       bl: corner(0, cts.height),
     };
+    pageSourceQuad = frame;
     rectified = warpQuadRgb(decoded.rgb, frame, cts.width, cts.height);
   }
-  void rectifyPage;
-  void toGray;
   mark("page", started);
 
   // In CTS the scale is fixed by construction — that is the entire point of
@@ -172,20 +185,39 @@ export async function extractRegions(
   const channels = prepareChannels(rectified, { pxPerMM, imageRegions: declaredRegions });
   mark("normalise", started);
 
+  // ---- is this the form at all? -------------------------------------------
+  //
+  // BEFORE any detector runs, because a detector's answer is only worth having
+  // if the coordinates it was handed mean something. Addressed at 160.2 mm,
+  // 30.3 mm of a photograph of a wall there is genuinely no passport photo, and
+  // reporting "the box was located and is empty" about it is a confident,
+  // specific, false statement — the exact failure this product refuses to make
+  // one step earlier in the pipeline.
+  started = performance.now();
+  const formPresence = assessFormPresence({ ink: channels.ink, rules: channels.rules, pxPerMM });
+  mark("recognise", started);
+
   // ---- detection ----------------------------------------------------------
   started = performance.now();
   const regions: RegionResult[] = [];
   const withoutGeometry: string[] = [];
 
+  // Decoded at most once, and only if a photograph is actually found. Nothing
+  // else delivers enough resolution to be worth a second decode: the signature
+  // and thumb are ink-on-transparency built from a mask measured in the
+  // rectified page, and upsampling that mask would soften the very edges the
+  // crop is made of.
+  const finerPhotoSource = photoSourceFactory(bytes, decoded, pageSourceQuad, cts);
+
   for (const field of allFields(template)) {
     if (!isImageField(field.type)) continue;
+
+    const base = { fieldId: field.id, key: field.key, label: field.label, type: field.type };
+
     if (!field.box) {
       withoutGeometry.push(field.key);
       regions.push({
-        fieldId: field.id,
-        key: field.key,
-        label: field.label,
-        type: field.type,
+        ...base,
         found: false,
         needsReview: true,
         reason: "geometry_unknown",
@@ -194,7 +226,19 @@ export async function extractRegions(
       continue;
     }
 
-    regions.push(await detectField(field, template, channels, rectified, pxPerMM));
+    if (!formPresence.recognised) {
+      regions.push({
+        ...base,
+        found: false,
+        needsReview: true,
+        reason: "geometry_unknown",
+        failedClause: "trust",
+        detail: formPresence.detail,
+      });
+      continue;
+    }
+
+    regions.push(await detectField(field, template, channels, rectified, pxPerMM, finerPhotoSource));
   }
   mark("detect", started);
 
@@ -207,9 +251,89 @@ export async function extractRegions(
       regions,
       timings,
       fieldsWithoutGeometry: withoutGeometry,
+      formPresence,
     },
     rectified,
     decoded,
+  };
+}
+
+/**
+ * Builds the mapping from rectified-page pixels back to the original capture,
+ * and decodes the original — once, lazily, and only when asked.
+ *
+ * Returns a function rather than a value because the decode is the expensive
+ * part and most scans never need it: a form with no photograph, or a capture
+ * already at the working resolution, must not pay 300 ms and 36 MB for pixels
+ * nobody will sample.
+ */
+function photoSourceFactory(
+  bytes: Uint8Array,
+  decoded: DecodedImage,
+  pageSourceQuad: Quad,
+  cts: { width: number; height: number },
+): () => Promise<PhotoSource | null> {
+  let cached: PhotoSource | null | undefined;
+
+  return async () => {
+    if (cached !== undefined) return cached;
+
+    // The working copy IS the original. A second decode would return the same
+    // pixels and the warp would sample them through an identity transform.
+    if (decoded.scale >= 0.999) {
+      cached = null;
+      return cached;
+    }
+
+    // Rectified page -> working pixels. This is the inverse of the warp that
+    // produced the rectified page, and `warpQuadRgb` builds it in exactly this
+    // direction, so it is re-derived rather than inverted.
+    const ctsCorners: Point[] = [
+      { x: 0, y: 0 },
+      { x: cts.width - 1, y: 0 },
+      { x: cts.width - 1, y: cts.height - 1 },
+      { x: 0, y: cts.height - 1 },
+    ];
+    const ctsToWorking = estimateHomography(ctsCorners, [
+      pageSourceQuad.tl,
+      pageSourceQuad.tr,
+      pageSourceQuad.br,
+      pageSourceQuad.bl,
+    ]);
+
+    // Working -> original is a pure scale: `decoded.scale` is working/original.
+    const inverse = 1 / decoded.scale;
+    const workingToOriginal: Matrix3 = [inverse, 0, 0, 0, inverse, 0, 0, 0, 1];
+    const transform = multiply3(workingToOriginal, ctsToWorking);
+
+    // Measure what that mapping actually buys, rather than assuming it. Under
+    // perspective the gain varies across the page, so it is measured at the
+    // centre with a 10 mm rod — long enough not to be dominated by rounding,
+    // short enough to be local.
+    const rodMM = 10;
+    const a = applyHomography(transform, { x: cts.width / 2, y: cts.height / 2 });
+    const b = applyHomography(transform, {
+      x: cts.width / 2 + rodMM * CTS_PX_PER_MM,
+      y: cts.height / 2,
+    });
+    const pxPerMM = Math.hypot(b.x - a.x, b.y - a.y) / rodMM;
+
+    // Nothing to gain, and a decode to prove it. Sampling a source that is no
+    // finer than the rectified page only adds an interpolation.
+    if (pxPerMM <= CTS_PX_PER_MM * 1.02) {
+      cached = null;
+      return cached;
+    }
+
+    try {
+      cached = { image: await decodeFullRgb(bytes), transform, pxPerMM };
+    } catch {
+      // A second decode failing where the first succeeded is not a reason to
+      // fail the scan. Fall back to the rectified page, which is what every
+      // crop was taken from before this path existed.
+      cached = null;
+    }
+    return cached;
   };
 }
 
@@ -219,6 +343,7 @@ async function detectField(
   channels: ScanChannels,
   rectified: Rgb,
   pxPerMM: number,
+  finerPhotoSource: () => Promise<PhotoSource | null>,
 ): Promise<RegionResult> {
   const base = { fieldId: field.id, key: field.key, label: field.label, type: field.type };
 
@@ -241,7 +366,8 @@ async function detectField(
       return { ...base, found: false, needsReview: true, reason: detection.reason, failedClause: detection.failedClause, detail: detection.detail };
     }
 
-    const crop = renderPhotoCrop(rectified, detection.quad, size, pxPerMM);
+    const finer = await finerPhotoSource();
+    const crop = renderPhotoCrop(rectified, detection.quad, size, pxPerMM, 300, finer ?? undefined);
     const { encodeRgbPng } = await import("../vision/io.ts");
     return {
       ...base,

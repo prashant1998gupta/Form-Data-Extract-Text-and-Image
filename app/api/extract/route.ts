@@ -80,6 +80,18 @@ export async function POST(request: Request): Promise<Response> {
           reason: result.page.reason,
           skewDegrees: result.page.skewDegrees,
         },
+        // Whether this is a printed form at all. Surfaced as a PAGE-level fact
+        // rather than left to be inferred from three identical region messages:
+        // when the capture is not a form, every field failing for the same
+        // reason is one problem, and showing it once with the measurement
+        // behind it is the difference between an operator re-photographing the
+        // right thing and an operator concluding the product is broken.
+        formPresence: {
+          recognised: result.formPresence.recognised,
+          detail: result.formPresence.detail,
+          textLines: result.formPresence.textLines,
+          rules: result.formPresence.rules,
+        },
         rectified: {
           width: result.rectifiedWidth,
           height: result.rectifiedHeight,
