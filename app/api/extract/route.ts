@@ -2,6 +2,7 @@ import "server-only";
 
 import { extractRegions } from "@/lib/pipeline/extract-regions";
 import { HOSPITAL_TEMPLATE, templateById } from "@/lib/templates/seed";
+import { parseCustomTemplate, TemplateError } from "@/lib/templates/custom";
 import { encodeRgbJpeg, ImageDecodeError } from "@/lib/vision/io";
 
 export const runtime = "nodejs";
@@ -51,10 +52,31 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  const templateId = String(form.get("templateId") ?? HOSPITAL_TEMPLATE.id);
-  const template = templateById(templateId);
-  if (!template) {
-    return fail(404, "unknown_template", "That form template does not exist.");
+  // A TAUGHT form: the caller drew the boxes over their own page and sends the
+  // layout with the scan. Parsed and validated, never cast — these coordinates
+  // decide where a crop is cut, so every field is treated as untrusted input.
+  // See the trust-boundary note in lib/templates/custom.ts.
+  const supplied = form.get("template");
+  let template;
+  if (typeof supplied === "string" && supplied.trim()) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(supplied);
+    } catch {
+      return fail(400, "template_invalid", "The form layout could not be read.");
+    }
+    try {
+      template = parseCustomTemplate(parsed);
+    } catch (error) {
+      if (error instanceof TemplateError) return fail(400, error.code, error.message);
+      throw error;
+    }
+  } else {
+    const templateId = String(form.get("templateId") ?? HOSPITAL_TEMPLATE.id);
+    template = templateById(templateId);
+    if (!template) {
+      return fail(404, "unknown_template", "That form template does not exist.");
+    }
   }
 
   const bytes = new Uint8Array(await file.arrayBuffer());

@@ -98,6 +98,28 @@ export const A4: PageSizeMM = { widthMM: 210, heightMM: 297 };
 export const A5: PageSizeMM = { widthMM: 148, heightMM: 210 };
 export const LETTER: PageSizeMM = { widthMM: 215.9, heightMM: 279.4 };
 export const LEGAL: PageSizeMM = { widthMM: 215.9, heightMM: 355.6 };
+/**
+ * Foolscap / FS, 8.5 x 13 in.
+ *
+ * Included because the target market actually uses it. Indian hospitals,
+ * schools and government offices commonly print forms on FS rather than A4, and
+ * its aspect (0.654) differs from A4's (0.707) by 7.5 % — enough that a form
+ * declared A4 but printed on FS puts every template coordinate progressively
+ * further out down the page. A template that cannot say "this form is FS" is a
+ * template that silently mis-registers a whole class of real documents.
+ */
+export const FOOLSCAP: PageSizeMM = { widthMM: 215.9, heightMM: 330.2 };
+
+/** The page sizes a person may choose when teaching a form. */
+export const PAGE_SIZES = {
+  A4,
+  A5,
+  LETTER,
+  LEGAL,
+  FOOLSCAP,
+} as const satisfies Record<string, PageSizeMM>;
+
+export type PageSizeKey = keyof typeof PAGE_SIZES;
 
 /** Standard photo sizes an admin picks from. Never guessed at detection time. */
 export const PHOTO_SIZES = {

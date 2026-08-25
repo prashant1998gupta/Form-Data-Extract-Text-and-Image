@@ -16,9 +16,16 @@ transcribed in [docs/01-product-spec.md](docs/01-product-spec.md).
 
 ## Status
 
-**The region-extraction engine and the verification screen are built, measured
-and running.** That is the hard part and the differentiator — and it runs with
-**zero model calls**.
+**The region-extraction engine, the verification screen, and teaching the app a
+new form by drawing on it are built, measured and running.** That is the hard
+part and the differentiator — and it runs with **zero model calls**.
+
+Any form works, not just the seeded one: photograph it, drag a box around the
+photo, signature and thumb, and it is extracted from then on. Boxes are stored
+in millimetres against the rectified page, so one drawn on a phone means the
+same thing on a scan next week. A box a few millimetres out still yields a crop
+at IoU 0.98 — the detector is told the geometry came from a finger rather than
+from registration, and widens its prior accordingly.
 
 Not yet built: the no-code form builder, template registration against a stored
 layout, text extraction, persistence, and the confidence calibrator. The full
@@ -28,7 +35,7 @@ spec rather than a sketch.
 ```bash
 npm install
 npm run dev            # http://localhost:3000 — upload a form, see the crops
-npm test               # 154 tests
+npm test               # 178 tests
 npm run build
 
 node --experimental-strip-types scripts/demo-extract.ts    # crops to disk, scored
@@ -246,9 +253,10 @@ lib/regions/     photo · signature · thumb · postprocess · params
                  form-presence   (is this a printed form at all?)
                  template-anchors (is it THIS form? absence needs an answer)
 lib/templates/   form definition; the hospital form is its first tenant
+                 custom + drawn — a form TAUGHT by drawing boxes on it
 lib/pipeline/    bytes -> crops, driven by a template
 app/             verification screen + /api/extract
-tests/           154 tests + the synthetic form generator
+tests/           178 tests + the synthetic form generator
 scripts/         demo-extract, preview-fixture
 docs/            product spec, architecture build spec
 ```

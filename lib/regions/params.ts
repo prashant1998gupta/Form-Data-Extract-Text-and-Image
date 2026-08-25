@@ -111,6 +111,33 @@ export const REGION_PARAMS = Object.freeze({
      * always beats a badly-measured one nearer the prior.
      */
     priorSigmaMM: 2.5,
+    /**
+     * The same two quantities, for a box a PERSON DREW rather than one
+     * registration produced.
+     *
+     * A dragged box means "the photo is around here", not "its top edge is at
+     * 30.3 mm", and the defaults above are calibrated for the second kind of
+     * claim. Measured on the reference fixture: the registered prior recovers a
+     * box 2 mm out and REFUSES one 4 mm out, which is well inside the error a
+     * finger on a phone carries — a template taught by drawing would simply
+     * appear not to work.
+     *
+     * Measured across a sweep, and the shape of the result is the interesting
+     * part: WIDER IS NOT BETTER. sigma 12 / band 20 and sigma 16 / band 26
+     * refuse every case, because a band that wide starts admitting the printed
+     * border and the surrounding rules, and the line fit has no way to prefer
+     * the right one. There is a genuine optimum, not a monotonic trade:
+     *
+     *   drawing error   0mm    2mm    4mm    6mm    8mm
+     *   sigma 8/band 14  0.987  0.984  0.986  0.988  refused   (IoU)
+     *   sigma 6/band 12  0.980  0.975  refused 0.970 refused
+     *   sigma 12/band 20 refused everywhere
+     *
+     * So 6 mm of hand-drawing error still yields a pixel-tight crop, and past
+     * about 8 mm the honest answer is to ask the person to draw it again.
+     */
+    drawnPriorSigmaMM: 8,
+    drawnPriorBandMM: 14,
     /** Accepted size relative to the declared photo size. */
     sizeFitRange: Object.freeze({ min: 0.72, max: 1.35 }),
     /** Accepted aspect deviation from the declared aspect. */

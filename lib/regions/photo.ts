@@ -69,6 +69,21 @@ export interface PhotoDetectionInput {
   readonly printedBorder?: Rect;
   /** Fraction of the whole page carrying colour. Below ~2 %, chroma features are dropped. */
   readonly pageSaturatedFraction: number;
+  /**
+   * How much to trust `expected`, and therefore how far to look.
+   *
+   * The defaults describe a REGISTERED prior — a template box mapped through a
+   * homography, out by a fraction of a millimetre. A box a person dragged with
+   * a finger on a phone is a different kind of object: it means "the photo is
+   * around here", not "the photo's top edge is at 30.3 mm". Measured, the
+   * defaults recover a box 2 mm out and refuse one 4 mm out, which is well
+   * inside the error a hand-drawn box carries — so a template taught by drawing
+   * would appear simply not to work.
+   *
+   * `bandMM` is the harder limit of the two: an edge outside the searched band
+   * is not scored badly, it is never seen at all.
+   */
+  readonly prior?: { readonly sigmaMM?: number; readonly bandMM?: number };
 }
 
 export interface EdgeReport {
@@ -133,7 +148,7 @@ export function detectPhoto(input: PhotoDetectionInput): PhotoDetection {
     channels.push({ image: lab.chroma, weight: P.channelWeights.chroma, sigma: paper.sigmaChroma });
   }
 
-  const bandPx = P.edgeBandMM * pxPerMM;
+  const bandPx = (input.prior?.bandMM ?? P.edgeBandMM) * pxPerMM;
   const windowPx = Math.max(2, Math.round(P.stepWindowMM * pxPerMM));
   // The inside window must be long enough that a printed rule or box border
   // cannot fill it, but short enough to fit inside the photo's own body.
@@ -324,7 +339,7 @@ function fitEdge(
 
   // Where registration says this edge should be, and how far it might be out.
   const anchor = expectedEdgePoint(expected, side);
-  const priorSigmaPx = Math.max(1, P.priorSigmaMM * input.pxPerMM);
+  const priorSigmaPx = Math.max(1, (input.prior?.sigmaMM ?? P.priorSigmaMM) * input.pxPerMM);
 
   // Score = support x strength x how well it agrees with the prior.
   //
@@ -477,24 +492,25 @@ function distanceToRectEdge(rect: Rect, side: EdgeSide, line: Line): number {
 function bandFor(expected: Rect, side: EdgeSide, bandPx: number): Rect {
   const trimX = expected.width * 0.15;
   const trimY = expected.height * 0.15;
+  const span = bandPx * 2;
   switch (side) {
     case "left":
-      return { x: expected.x - bandPx, y: expected.y + trimY, width: bandPx * 2, height: expected.height - trimY * 2 };
+      return { x: expected.x - bandPx, y: expected.y + trimY, width: span, height: expected.height - trimY * 2 };
     case "right":
       return {
         x: expected.x + expected.width - bandPx,
         y: expected.y + trimY,
-        width: bandPx * 2,
+        width: span,
         height: expected.height - trimY * 2,
       };
     case "top":
-      return { x: expected.x + trimX, y: expected.y - bandPx, width: expected.width - trimX * 2, height: bandPx * 2 };
+      return { x: expected.x + trimX, y: expected.y - bandPx, width: expected.width - trimX * 2, height: span };
     case "bottom":
       return {
         x: expected.x + trimX,
         y: expected.y + expected.height - bandPx,
         width: expected.width - trimX * 2,
-        height: bandPx * 2,
+        height: span,
       };
   }
 }

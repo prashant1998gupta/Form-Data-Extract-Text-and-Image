@@ -3,6 +3,40 @@
 import { useCallback, useRef, useState } from "react";
 
 import { prepareUpload, UploadPrepareError } from "@/lib/client/prepare-upload";
+import TemplateEditor, { type DrawnTemplate } from "./TemplateEditor";
+
+/**
+ * Taught forms live in localStorage.
+ *
+ * They are box coordinates in millimetres and a name — no patient data, nothing
+ * from the scan itself — so this does not weaken the "nothing is stored"
+ * promise the footnote makes about the images. It is deliberately interim:
+ * templates belong in the database beside the records they describe, and will
+ * move there with persistence. Until then, a form taught once on a device stays
+ * taught on that device, which is what makes teaching it worth the effort.
+ */
+const TEMPLATE_STORE = "formlink.templates.v1";
+
+function loadTemplates(): DrawnTemplate[] {
+  if (typeof localStorage === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(TEMPLATE_STORE);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? (parsed as DrawnTemplate[]) : [];
+  } catch {
+    // A corrupt store must not take the whole screen down with it.
+    return [];
+  }
+}
+
+function storeTemplates(templates: readonly DrawnTemplate[]): void {
+  try {
+    localStorage.setItem(TEMPLATE_STORE, JSON.stringify(templates));
+  } catch {
+    // Private browsing, or a full quota. The template still works for this
+    // scan; it just will not be there next time.
+  }
+}
 
 /**
  * The verification screen: original form on the left, extracted elements on the
@@ -41,7 +75,7 @@ type Region = {
 };
 
 type Result = {
-  template: { id: string; name: string };
+  template: { id: string; name: string; page: { widthMM: number; heightMM: number } };
   page: { method: string; confidence: number; reason: string; skewDegrees: number };
   formPresence: { recognised: boolean; detail: string; textLines: number; rules: number };
   registration: { registered: boolean; detail: string; anchorsFound: number; anchorsChecked: number };
@@ -102,12 +136,24 @@ export default function ScanWorkbench() {
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [templates, setTemplates] = useState<DrawnTemplate[]>([]);
+  // The bytes that produced the current result, kept so the same capture can be
+  // re-read against a template the operator has just drawn. Re-photographing
+  // the form to apply a template drawn on that very photograph would be a
+  // strange thing to ask.
+  const lastFile = useRef<File | null>(null);
+  const loaded = useRef(false);
+  if (!loaded.current && typeof window !== "undefined") {
+    loaded.current = true;
+    setTemplates(loadTemplates());
+  }
 
   // A ref, not state: two clicks in the same tick both read the pre-render
   // value of a state flag and both pass. The state exists only to re-render.
   const inFlight = useRef(false);
 
-  const submit = useCallback(async (file: File) => {
+  const submit = useCallback(async (file: File, template?: DrawnTemplate) => {
     if (inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
@@ -118,8 +164,11 @@ export default function ScanWorkbench() {
       // at the edge, so there is no server-side handling that could rescue it.
       const prepared = await prepareUpload(file);
 
+      lastFile.current = file;
+
       const body = new FormData();
       body.append("image", prepared.file);
+      if (template) body.append("template", JSON.stringify(template));
 
       let response: Response;
       try {
@@ -188,6 +237,32 @@ export default function ScanWorkbench() {
     },
     [submit],
   );
+
+  const saveTemplate = useCallback(
+    (drawn: DrawnTemplate) => {
+      // Replace by name, so re-teaching a form corrects it rather than
+      // accumulating near-duplicates the operator then has to choose between.
+      const next = [drawn, ...templates.filter((t) => t.name !== drawn.name)].slice(0, 20);
+      setTemplates(next);
+      storeTemplates(next);
+      setEditing(false);
+      const file = lastFile.current;
+      if (file) void submit(file, drawn);
+    },
+    [templates, submit],
+  );
+
+  if (editing && result) {
+    return (
+      <TemplateEditor
+        pageDataUrl={result.rectified.dataUrl}
+        pageMM={result.template.page}
+        initialName={result.registration.registered ? result.template.name : ""}
+        onCancel={() => setEditing(false)}
+        onSave={saveTemplate}
+      />
+    );
+  }
 
   if (busy) {
     return (
@@ -385,11 +460,40 @@ export default function ScanWorkbench() {
         </section>
       </div>
 
-      <div className="actions" style={{ marginTop: 24, justifyContent: "flex-start" }}>
+      <div className="actions" style={{ marginTop: 24, justifyContent: "flex-start", flexWrap: "wrap" }}>
+        {/* The escape hatch from every wrong answer on this screen. If the
+            crops are wrong, they are wrong because the template describes a
+            different form — and the person looking at them can fix that in
+            three drags. Offered always, not only on a failure: a crop can be
+            subtly wrong on a form that registered perfectly well. */}
+        <button className="button" type="button" onClick={() => setEditing(true)}>
+          {result.registration.registered ? "Fix these boxes" : "Teach this form"}
+        </button>
         <button className="button secondary" type="button" onClick={() => setResult(null)}>
           Scan another form
         </button>
       </div>
+
+      {/* Re-read the SAME capture as a form taught earlier. Offered here rather
+          than on the upload screen because it only makes sense once there is a
+          capture to re-read and a visible answer to disagree with. */}
+      {templates.length > 0 ? (
+        <div className="samples" style={{ marginTop: 14 }}>
+          <span>Read this as</span>
+          {templates.map((template) => (
+            <button
+              key={template.name}
+              type="button"
+              onClick={() => {
+                const file = lastFile.current;
+                if (file) void submit(file, template);
+              }}
+            >
+              {template.name}
+            </button>
+          ))}
+        </div>
+      ) : null}
     </>
   );
 }

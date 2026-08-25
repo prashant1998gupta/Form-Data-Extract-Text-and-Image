@@ -422,6 +422,15 @@ async function detectField(
       pxPerMM,
       printedBorder: field.printedBorder ? toPixels(field.printedBorder, template) : undefined,
       pageSaturatedFraction: channels.saturatedFraction,
+      // A box a person DREW is a different kind of claim from one registration
+      // produced, and the detector has to be told. With the registered prior it
+      // refuses a box 4 mm out; with this one it recovers a box 6 mm out at IoU
+      // 0.988. Widening further makes it WORSE, not better — see the measured
+      // sweep in params.ts.
+      prior:
+        field.origin === "drawn"
+          ? { sigmaMM: REGION_PARAMS.photo.drawnPriorSigmaMM, bandMM: REGION_PARAMS.photo.drawnPriorBandMM }
+          : undefined,
     });
 
     if (!detection.found) {

@@ -95,6 +95,16 @@ export interface FormField {
   readonly photoSize?: PhotoSizeKey;
   /** Free-text hint shown to staff on the verify screen. */
   readonly hint?: string;
+  /**
+   * Where this field's geometry came from.
+   *
+   * `registered` (the default) means the box was mapped through a homography
+   * and is accurate to a fraction of a millimetre. `drawn` means a person
+   * dragged it, and is accurate to a few millimetres — a different kind of
+   * claim, which the photo detector must be told about or it will refuse
+   * perfectly good boxes. See `REGION_PARAMS.photo.drawnPrior*`.
+   */
+  readonly origin?: "registered" | "drawn";
 }
 
 export interface FormSection {
