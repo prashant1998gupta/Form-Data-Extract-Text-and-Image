@@ -90,8 +90,21 @@ export const HOSPITAL_TEMPLATE: FormTemplate = {
           key: "thumbImpression",
           label: "Thumb Impression",
           type: "thumbImpression",
+          // The SEARCH region, deliberately generous: a thumb is pressed by
+          // hand rather than placed, and lands where it lands.
           box: { xMM: 149, yMM: 233.7, widthMM: 30.5, heightMM: 37.2 },
-          printedBorder: { xMM: 149, yMM: 233.7, widthMM: 30.5, heightMM: 37.2 },
+          // The PRINTED rectangle, measured off the form: 21 x 27.3 mm at
+          // 146.1, 233. This used to be a verbatim copy of `box` above — 30.5 x
+          // 37.2 — which contradicts the field's own documentation ("distinct
+          // from `box` because the printed border and the thing pasted over it
+          // are different objects") and put the declared right and bottom edges
+          // 12 mm and 11 mm outside the ink that is actually on the paper.
+          //
+          // It went unnoticed because nothing read it: the thumb detector takes
+          // a padded ROI derived from `box` and never used the border at all.
+          // `template-anchors.ts` reads it now, and a landmark that is not where
+          // the template says it is is exactly what that gate refuses on.
+          printedBorder: { xMM: 146.1, yMM: 233, widthMM: 21, heightMM: 27.3 },
         },
       ],
     },

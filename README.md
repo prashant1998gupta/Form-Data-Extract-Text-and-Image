@@ -28,7 +28,7 @@ spec rather than a sketch.
 ```bash
 npm install
 npm run dev            # http://localhost:3000 — upload a form, see the crops
-npm test               # 149 tests
+npm test               # 154 tests
 npm run build
 
 node --experimental-strip-types scripts/demo-extract.ts    # crops to disk, scored
@@ -243,11 +243,12 @@ lib/vision/      pure-TS image primitives, browser+server isomorphic
 lib/geometry/    Canonical Template Space — everything persisted is in mm
 lib/ink/         paper statistics, photometric normalisation, caption removal
 lib/regions/     photo · signature · thumb · postprocess · params
-                 form-presence (is this a printed form at all?)
+                 form-presence   (is this a printed form at all?)
+                 template-anchors (is it THIS form? absence needs an answer)
 lib/templates/   form definition; the hospital form is its first tenant
 lib/pipeline/    bytes -> crops, driven by a template
 app/             verification screen + /api/extract
-tests/           149 tests + the synthetic form generator
+tests/           154 tests + the synthetic form generator
 scripts/         demo-extract, preview-fixture
 docs/            product spec, architecture build spec
 ```

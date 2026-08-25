@@ -39,6 +39,7 @@ import { detectSignature } from "../regions/signature.ts";
 import { detectThumb } from "../regions/thumb.ts";
 import { renderPhotoCrop, renderSignatureCrop, type PhotoSource } from "../regions/postprocess.ts";
 import { assessFormPresence, type FormPresence } from "../regions/form-presence.ts";
+import { verifyTemplateAnchors, type TemplateRegistration } from "../regions/template-anchors.ts";
 import { REGION_PARAMS, type AbsenceReason, type GateClause } from "../regions/params.ts";
 import { allFields, imageFields, isImageField, type FormField, type FormTemplate } from "../templates/types.ts";
 import type { Matrix3, Point, Quad, Rect, Rgb } from "../vision/types.ts";
@@ -62,6 +63,13 @@ export interface RegionResult {
   readonly detail?: string;
   /** Surfaced when the mark in a box belongs in a different one. */
   readonly warning?: string;
+  /**
+   * True when this result was produced against a template whose landmarks could
+   * NOT be confirmed on the page. The crop may be a perfectly good crop of
+   * something; what is not established is that it is this FIELD. The verify
+   * screen must not present it as a settled value.
+   */
+  readonly unverifiedTemplate?: boolean;
   /** Where the crop was taken from, in the rectified page's pixels. For the overlay. */
   readonly regionInPage?: Rect;
   readonly quadInPage?: Quad;
@@ -86,6 +94,12 @@ export interface ExtractionResult {
    * the page it describes was never there.
    */
   readonly formPresence: FormPresence;
+  /**
+   * Whether the template's own printed landmarks were found where it says they
+   * are. When they were not, template coordinates mean nothing on this page and
+   * NO ABSENCE MAY BE ASSERTED — see `lib/regions/template-anchors.ts`.
+   */
+  readonly registration: TemplateRegistration;
 }
 
 export interface ExtractOptions {
@@ -195,6 +209,16 @@ export async function extractRegions(
   // one step earlier in the pipeline.
   started = performance.now();
   const formPresence = assessFormPresence({ ink: channels.ink, rules: channels.rules, pxPerMM });
+
+  // ...and is it THIS form? Presence and identity are different questions, and
+  // conflating them is how a school certificate got measured against hospital
+  // coordinates. This one cannot correct a misalignment, only notice one — but
+  // noticing is what decides whether an absence may be asserted at all.
+  const registration = verifyTemplateAnchors({
+    inkWithRules: channels.inkWithRules,
+    template,
+    pxPerMM,
+  });
   mark("recognise", started);
 
   // ---- detection ----------------------------------------------------------
@@ -238,7 +262,8 @@ export async function extractRegions(
       continue;
     }
 
-    regions.push(await detectField(field, template, channels, rectified, pxPerMM, finerPhotoSource));
+    const result = await detectField(field, template, channels, rectified, pxPerMM, finerPhotoSource);
+    regions.push(registration.registered ? result : withoutTemplateTrust(result, registration));
   }
   mark("detect", started);
 
@@ -252,10 +277,47 @@ export async function extractRegions(
       timings,
       fieldsWithoutGeometry: withoutGeometry,
       formPresence,
+      registration,
     },
     rectified,
     decoded,
   };
+}
+
+/**
+ * Downgrades a result produced against a template whose landmarks were not
+ * found on the page.
+ *
+ * THE ASYMMETRY THIS ENFORCES. A POSITIVE finding — "there is a pasted
+ * photograph here" — is a claim about pixels that were examined, and it
+ * survives not knowing which form this is. A NEGATIVE finding — "the photo box
+ * is empty" — is a claim about a LOCATION, and it is meaningless unless the
+ * location is known. When the template's own printed furniture is not where it
+ * says, the location is not known.
+ *
+ * So absence is demoted to `geometry_unknown`, the reason that already means
+ * "registration could not be trusted, so no region could be addressed at all" —
+ * never `box_empty`, which asserts a located box. That is the exact sentence
+ * that was produced about a photograph plainly present on a user's form.
+ *
+ * A crop that WAS found is kept, because it is real: something is there and the
+ * operator should see it. What is removed is the assertion that it belongs to
+ * this field. It is flagged, forced to review, and the verify screen presents it
+ * as an unconfirmed candidate rather than as a value — because the harm in the
+ * reported failure was not the crop, it was the words "Patient Signature"
+ * printed under a photograph of a table.
+ */
+function withoutTemplateTrust(result: RegionResult, registration: TemplateRegistration): RegionResult {
+  if (!result.found) {
+    return {
+      ...result,
+      reason: "geometry_unknown",
+      failedClause: "trust",
+      detail: registration.detail,
+      needsReview: true,
+    };
+  }
+  return { ...result, unverifiedTemplate: true, needsReview: true };
 }
 
 /**

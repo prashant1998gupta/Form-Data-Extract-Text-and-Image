@@ -92,6 +92,16 @@ export async function POST(request: Request): Promise<Response> {
           textLines: result.formPresence.textLines,
           rules: result.formPresence.rules,
         },
+        // Whether this is THIS form, which is a different question from whether
+        // it is a form. When the answer is no, every crop below is an
+        // unconfirmed candidate rather than a field value, and no absence is
+        // asserted anywhere in the payload.
+        registration: {
+          registered: result.registration.registered,
+          detail: result.registration.detail,
+          anchorsFound: result.registration.anchorsFound,
+          anchorsChecked: result.registration.anchorsChecked,
+        },
         rectified: {
           width: result.rectifiedWidth,
           height: result.rectifiedHeight,
@@ -113,6 +123,7 @@ export async function POST(request: Request): Promise<Response> {
           detail: region.detail,
           warning: region.warning,
           lowResolution: region.lowResolution,
+          unverifiedTemplate: region.unverifiedTemplate,
           rotationDegrees: region.rotationDegrees,
           width: region.width,
           height: region.height,

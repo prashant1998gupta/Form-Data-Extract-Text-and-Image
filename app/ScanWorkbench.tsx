@@ -32,6 +32,7 @@ type Region = {
   detail?: string;
   warning?: string;
   lowResolution?: boolean;
+  unverifiedTemplate?: boolean;
   rotationDegrees?: number;
   width?: number;
   height?: number;
@@ -43,6 +44,7 @@ type Result = {
   template: { id: string; name: string };
   page: { method: string; confidence: number; reason: string; skewDegrees: number };
   formPresence: { recognised: boolean; detail: string; textLines: number; rules: number };
+  registration: { registered: boolean; detail: string; anchorsFound: number; anchorsChecked: number };
   rectified: { width: number; height: number; pxPerMM: number; dataUrl: string };
   regions: Region[];
   fieldsWithoutGeometry: string[];
@@ -335,6 +337,18 @@ export default function ScanWorkbench() {
                 {result.formPresence.detail}. Photograph the printed form with the whole page in
                 frame.
               </p>
+            ) : !result.registration.registered ? (
+              /* The page IS a form, but not demonstrably THIS one. Anything found
+                 below is real; what is not established is which field it belongs
+                 to. Saying so once, plainly, is the difference between an
+                 operator checking the crops and an operator trusting a label
+                 that was never earned. */
+              <p className="notice warn" role="alert" style={{ marginBottom: 16 }}>
+                <strong>This may not be the {result.template.name}.</strong>{" "}
+                {result.registration.detail}. The images below are shown as{" "}
+                <strong>unconfirmed candidates</strong> — check each one before using it, because
+                nothing here confirms which field it belongs to.
+              </p>
             ) : null}
 
             <div className="regions">
@@ -390,7 +404,11 @@ function RegionCard({ region, suppressDetail = false }: { region: Region; suppre
       </div>
 
       <div className="region-detail">
-        <h3>{region.label}</h3>
+        {/* An unverified crop is NOT presented under the field's name as though
+            it were that field. The reported failure delivered a photograph of a
+            table headed "Patient Signature" at 92% — the crop was real, the
+            label was the lie. */}
+        <h3>{region.unverifiedTemplate ? `Unconfirmed — possibly ${region.label}` : region.label}</h3>
 
         {region.found ? (
           <div className="region-meta">
