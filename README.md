@@ -26,7 +26,7 @@ build spec rather than a sketch.
 
 ```bash
 npm install
-npm test                                                  # 104 tests
+npm test                                                  # 113 tests
 node --experimental-strip-types scripts/demo-extract.ts   # crops, no model calls
 node --experimental-strip-types scripts/preview-fixture.ts
 ```
@@ -88,9 +88,25 @@ respectable IoU):
 | Shadow | 0.986 | 0.99× |
 | Glare | 0.986 | 0.99× |
 
+**Thumb impression** — containment 0.917–0.925 across clean, shadow and
+photocopy. Confidence is **hard-capped at 0.70 and review is always required**,
+because without ridge verification this detector cannot support a stronger
+claim. That is enforced in the detector, not left to the caller.
+
+Ridge-frequency analysis is deliberately *not* used. Real stamp-pad impressions
+are usually over-inked into a solid smudge with no resolvable ridges; phone
+image pipelines denoise away the 0.4–0.6 mm band; and JPEG's 8×8 blocking puts
+spurious energy right beside it, so the fallback fires on compression
+artefacts. Machinery that works on flatbed scans and almost never in the field
+is worse than none, because it produces confident wrong answers where honest
+uncertainty was available.
+
 **Refusals.** An empty printed photo box, blank paper, a signature region shown
 to the photo detector, printed text in a signature box, and a thumb impression
-in a signature box are all refused, each with a distinct reason.
+in a signature box are all refused, each with a distinct reason. A signature
+written *in the thumb box* is reported as a wrong-box warning rather than
+cropped into a biometric field or silently ignored — the template knows which
+box is which, so that is a human error the system can surface.
 
 These are synthetic-corpus numbers. Real handwritten Indian hospital forms will
 be harder, and no number here should be quoted to a customer before it has been
@@ -192,8 +208,8 @@ lib/vision/      pure-TS image primitives, browser+server isomorphic
                  io (sharp bridge; applies EXIF orientation)
 lib/geometry/    Canonical Template Space — everything persisted is in mm
 lib/ink/         paper statistics, photometric normalisation, caption removal
-lib/regions/     photo · signature · postprocess · params
-tests/           104 tests + the synthetic form generator
+lib/regions/     photo · signature · thumb · postprocess · params
+tests/           113 tests + the synthetic form generator
 scripts/         demo-extract, preview-fixture
 docs/            product spec, architecture build spec
 ```

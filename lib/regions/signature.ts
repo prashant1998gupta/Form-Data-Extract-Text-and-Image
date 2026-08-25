@@ -177,7 +177,7 @@ export function detectSignature(input: SignatureDetectionInput): SignatureDetect
   // Cross-class rejection. These are not "low scores" — they are positive
   // identifications of something else, and treating them as weak signatures
   // would put a thumbprint in the signature field.
-  if (features.solidity >= REGION_PARAMS.thumb.minSolidity && features.aspect <= 1.8 && features.aspect >= 0.55) {
+  if (features.solidity >= REGION_PARAMS.thumb.crossRejectSolidity && features.aspect <= 1.8 && features.aspect >= 0.55) {
     return {
       found: false,
       reason: "below_threshold",

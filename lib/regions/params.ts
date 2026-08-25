@@ -209,13 +209,50 @@ export const REGION_PARAMS = Object.freeze({
    */
   thumb: Object.freeze({
     searchPadFraction: 0.3,
-    /** A thumb pad is roughly 15x20 mm to 25x30 mm. */
+    /**
+     * Physical EXTENT of the impression — its bounding box, not its ink area.
+     * A thumb pad is roughly 15x20 mm to 25x30 mm.
+     *
+     * The distinction matters because a well-taken impression is RIDGED: ink on
+     * the ridges, paper in the valleys, so only about half the extent is inked.
+     * Gating ink area against a pad-size range rejects exactly the cleanest
+     * impressions while admitting over-inked smudges, which is backwards. Fill
+     * ratio measures the inked fraction separately, where it belongs.
+     */
     areaRangeMM2: Object.freeze({ min: 150, max: 1200 }),
     aspectRange: Object.freeze({ min: 0.55, max: 1.8 }),
-    minSolidity: 0.7,
-    fillRange: Object.freeze({ min: 0.3, max: 0.85 }),
-    /** Above this curvature the mark is cursive — somebody signed in the thumb box. */
-    maxCurvature: 0.3,
+    /**
+     * Ink over convex-hull area, for ACCEPTING a thumb.
+     *
+     * Set low enough to admit a clean ridged print, which sits near 0.5 — the
+     * valleys between ridges are genuinely empty. An over-inked smudge reaches
+     * 0.9. Both are thumb impressions and both must pass.
+     */
+    minSolidity: 0.45,
+    /**
+     * Ink over convex-hull area for REJECTING something as "too solid to be a
+     * signature", used by the signature detector.
+     *
+     * Deliberately much higher than `minSolidity`. These answer different
+     * questions — "is this solid enough to be a thumb?" and "is this so solid it
+     * cannot be a signature?" — and a single threshold serving both would either
+     * reject legitimate signatures or admit smudges as signatures. Compactness
+     * and the absence of cursive structure do the rest of the separation.
+     */
+    crossRejectSolidity: 0.7,
+    fillRange: Object.freeze({ min: 0.25, max: 0.85 }),
+    /**
+     * A mark this elongated AND this open is a signature written in the thumb
+     * box — a human error the template lets us surface rather than absorb.
+     *
+     * Both conditions are required, because either alone has honest exceptions:
+     * an over-inked smudge can be elongated, and a light impression can be
+     * open. Neither is both. Measured on the reference fixtures, a thumb sits at
+     * aspect 0.71 / solidity 0.47 and a signature at 5.75 / 0.14, so the
+     * separation is wide.
+     */
+    wrongBoxAspect: 2.5,
+    wrongBoxSolidity: 0.3,
     closeMM: 2.5,
     scoreThreshold: 0.55,
     /** Hard ceiling. A thumb crop is always confirmed by a human in this version. */

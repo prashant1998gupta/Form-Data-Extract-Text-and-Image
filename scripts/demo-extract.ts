@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import { prepareChannels } from "../lib/ink/normalize.ts";
 import { detectPhoto } from "../lib/regions/photo.ts";
 import { detectSignature } from "../lib/regions/signature.ts";
+import { detectThumb } from "../lib/regions/thumb.ts";
 import { flattenOntoWhite, renderPhotoCrop, renderSignatureCrop } from "../lib/regions/postprocess.ts";
 import { encodeRgbPng, encodeRgbaPng } from "../lib/vision/io.ts";
 import { boundsOf, containment, iou, quadPoints, type Rect } from "../lib/vision/types.ts";
@@ -55,10 +56,11 @@ for (const variant of variants) {
   // detectors the ground truth would test a situation that never occurs.
   const photoBox: Rect = jitter(truth.photo ?? { x: 940, y: 173, width: 213, height: 272 });
   const signatureBox: Rect = { x: 96, y: 1330, width: 470, height: 130 };
+  const thumbBox: Rect = { x: 880, y: 1380, width: 180, height: 220 };
 
   const channels = prepareChannels(rgb, {
     pxPerMM: PX_PER_MM,
-    imageRegions: [photoBox, signatureBox],
+    imageRegions: [photoBox, signatureBox, thumbBox],
   });
 
   // ---- photograph ---------------------------------------------------------
@@ -115,8 +117,25 @@ for (const variant of variants) {
     if (truth.signature) signatureCell += "  [MISS]";
   }
 
+  // ---- thumb impression ---------------------------------------------------
+  const thumb = detectThumb({ ink: channels.ink, rgb, roi: thumbBox, pxPerMM: PX_PER_MM });
+  let thumbCell = "";
+  if (thumb.found) {
+    const crop = renderSignatureCrop(rgb, thumb.mask, thumb.bounds, PX_PER_MM);
+    await writeFile(join(outputDir, `${variant.name}-thumb.png`), await encodeRgbaPng(crop.rgba, crop.width, crop.height));
+    const held = truth.thumb ? containment(truth.thumb, thumb.bounds) : NaN;
+    thumbCell =
+      `${crop.width}x${crop.height}  conf ${thumb.confidence.toFixed(2)} (capped)  always-review` +
+      (Number.isNaN(held) ? "  [FALSE POSITIVE]" : `  contains ${held.toFixed(3)}`);
+  } else {
+    thumbCell = `Not Detected (${thumb.reason})`;
+    if (thumb.wrongBoxWarning) thumbCell += `  WARNING: ${thumb.wrongBoxWarning}`;
+    if (truth.thumb) thumbCell += "  [MISS]";
+  }
+
   rows.push(`${variant.name.padEnd(20)} photo: ${photoCell}`);
   rows.push(`${" ".repeat(20)} sig:   ${signatureCell}`);
+  rows.push(`${" ".repeat(20)} thumb: ${thumbCell}`);
   rows.push("");
 }
 
