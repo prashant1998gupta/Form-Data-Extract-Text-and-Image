@@ -224,11 +224,22 @@ export const REGION_PARAMS = Object.freeze({
     /**
      * Ink over convex-hull area, for ACCEPTING a thumb.
      *
-     * Set low enough to admit a clean ridged print, which sits near 0.5 — the
-     * valleys between ridges are genuinely empty. An over-inked smudge reaches
-     * 0.9. Both are thumb impressions and both must pass.
+     * The admissible range is wide, and deliberately so, because solidity here
+     * is RESOLUTION-DEPENDENT in a way most shape features are not. Friction
+     * ridges are near the resolution limit: sample the same impression more
+     * finely and the valleys between ridges resolve as empty, dropping
+     * solidity; sample it coarsely and adjacent ridges blur together, raising
+     * it. The same synthetic impression measured 0.47 at 150 dpi and 0.40 after
+     * rectification to the 200 dpi canonical raster — the mark did not change,
+     * only how it was sampled.
+     *
+     * An over-inked smudge, where the ink has filled the valleys, reaches 0.9
+     * at any resolution. All of these are thumb impressions and all must pass,
+     * so the floor sits below the whole band rather than in the middle of it.
+     * Compactness and fill do the discriminating work; solidity only excludes
+     * the genuinely open marks.
      */
-    minSolidity: 0.45,
+    minSolidity: 0.35,
     /**
      * Ink over convex-hull area for REJECTING something as "too solid to be a
      * signature", used by the signature detector.
