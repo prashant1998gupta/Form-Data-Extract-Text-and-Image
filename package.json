@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test \"tests/**/*.test.ts\"",
     "test:watch": "node --experimental-strip-types --test --watch \"tests/**/*.test.ts\"",
-    "fixtures": "node --experimental-strip-types scripts/make-fixtures.ts"
+    "fixtures": "node --experimental-strip-types scripts/preview-fixture.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",

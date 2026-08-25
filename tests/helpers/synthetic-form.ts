@@ -172,7 +172,11 @@ export function renderSyntheticForm(options: SyntheticFormOptions = {}): Synthet
     "Doctor Assigned",
   ];
   const fields: { label: string; box: Rect }[] = [];
-  const fieldRight = withPhoto || true ? photoBox.x - 24 : right;
+  // Always short of the photo box, because the printed box is always drawn —
+  // `withPhoto` controls whether a photograph is PASTED into it, not whether
+  // the form has one. An unfilled form still has the rectangle printed on it,
+  // and its field rows still stop before it.
+  const fieldRight = photoBox.x - 24;
   const rowHeight = Math.round(page.height * 0.038);
 
   for (const label of fieldLabels) {

@@ -116,7 +116,10 @@ export type PhotoDetection =
 const P = REGION_PARAMS.photo;
 
 export function detectPhoto(input: PhotoDetectionInput): PhotoDetection {
-  const { lab, texture, ink, paper, expected, sizeMM, pxPerMM } = input;
+  // `ink` is deliberately not destructured: the emptiness test reads it as
+  // `input.ink` further down, and a second binding here reads as an unused
+  // channel rather than one used elsewhere.
+  const { lab, texture, paper, expected, sizeMM, pxPerMM } = input;
   const greyscale = input.pageSaturatedFraction < P.greyscaleSaturationFraction;
 
   // Three independent views of the same boundary. Each is divided by its own

@@ -305,11 +305,6 @@ function singleInkScore(rgb: Rgb, mask: Mask, bounds: Rect): number {
   return Math.min(1, neutralFraction + (1 - neutralFraction) * resultant);
 }
 
-function ramp(value: number, low: number, high: number): number {
-  if (high <= low) return 0;
-  return Math.max(0, Math.min(1, (value - low) / (high - low)));
-}
-
 /** 1 inside the band, falling to 0 within 40 % of the band width outside it. */
 function plateau(value: number, low: number, high: number): number {
   if (value >= low && value <= high) return 1;
