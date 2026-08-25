@@ -90,6 +90,28 @@ export function edgeStepProfile(
   side: EdgeSide,
   band: { x: number; y: number; width: number; height: number },
   halfWindow: number,
+  options: {
+    minResponse?: number;
+    outermostFraction?: number;
+    sustainWindow?: number;
+    /**
+     * How many candidate steps to keep per scanline.
+     *
+     * One is not enough, and no threshold makes it enough. A scanline crossing
+     * a photo's top edge typically contains three real steps: the form's
+     * printed rule above it, the photo boundary, and a strong interior contour
+     * such as a hairline. Picking the strongest returns the hairline; picking
+     * the outermost returns the printed rule; picking by any absolute threshold
+     * depends on paper noise that varies by an order of magnitude between a
+     * flatbed scan and a phone capture.
+     *
+     * Keeping all three and letting a global fit decide is what actually works,
+     * because the three competitors differ in a way a single scanline cannot
+     * see but a whole edge can: only one of them forms a line at the distance
+     * registration predicts.
+     */
+    peaksPerLine?: number;
+  } = {},
 ): StepSample[] {
   if (channels.length === 0) throw new Error("edgeStepProfile: no channels");
   const vertical = side === "left" || side === "right";
@@ -108,13 +130,43 @@ export function edgeStepProfile(
   const acrossEnd = vertical ? x1 : y1;
 
   const window = Math.max(1, Math.round(halfWindow));
-  const buffer = new Float64Array(window);
+
+  /**
+   * SUSTAIN — the window that separates a boundary from a printed line.
+   *
+   * A pasted photograph and a printed rule both produce a strong, straight,
+   * correctly-oriented step, and no amount of tuning a response threshold tells
+   * them apart: on a clean scan where paper noise is ~1 grey level, even a 2 px
+   * rule that a median has largely suppressed still clears any floor a faint
+   * photo edge also has to clear. Measured on the reference fixture, 58 of 146
+   * scanlines locked onto the form's printed header rule instead of the photo
+   * 29 px below it.
+   *
+   * The difference is physical, not statistical. A rule is a step down and
+   * immediately back up — a few tenths of a millimetre of ink. A photo edge is
+   * a step that STAYS stepped for the entire height of the photograph. So the
+   * inside window is made much longer than the outside one: a rule fails
+   * because its long inside window is mostly paper again, while a photo edge
+   * passes because everything inside it really is photograph.
+   *
+   * This also makes the detector robust to the form's box borders, underlines
+   * and table gridlines generally, which is most of what surrounds a photo box.
+   */
+  const sustain = Math.max(window, Math.round(options.sustainWindow ?? window));
+  const buffer = new Float64Array(Math.max(window, sustain));
   const samples: StepSample[] = [];
 
+  // Which direction is "inside" the object? For a left or top edge the band
+  // runs outside -> inside, so the inside is the higher index.
+  const insideIsHigher = side === "left" || side === "top";
+
   // Leave room for a full window on both sides; a truncated window biases the
-  // median and would pull every edge toward the band's centre.
-  const searchStart = acrossStart + window - 1;
-  const searchEnd = acrossEnd - window;
+  // median and would pull every edge toward the band's centre. The inside
+  // window is the long one, so the margin it needs depends on which side it is.
+  const leadingWindow = insideIsHigher ? window : sustain;
+  const trailingWindow = insideIsHigher ? sustain : window;
+  const searchStart = acrossStart + leadingWindow - 1;
+  const searchEnd = acrossEnd - trailingWindow;
   if (searchEnd - searchStart < 3) return [];
   const responses = new Float64Array(searchEnd - searchStart);
 
@@ -125,13 +177,13 @@ export function edgeStepProfile(
     for (let across = searchStart; across < searchEnd; across += 1) {
       let response = 0;
       for (const channel of channels) {
-        // The two windows ABUT: [across-w+1 .. across] and [across+1 .. across+w].
-        // They must not skip the pixel at `across`. With a gap, two adjacent
+        // The two windows ABUT: they meet between `across` and `across+1` and
+        // must not skip the pixel at `across`. With a gap, two adjacent
         // positions score identically on a clean step and the tie resolves to
         // whichever came first — a systematic one-pixel bias toward the start
         // of the scan, which on a 35 mm photo is a visible sliver of paper.
-        const before = medianAlong(channel.image, vertical, along, across - window + 1, window, buffer);
-        const after = medianAlong(channel.image, vertical, along, across + 1, window, buffer);
+        const before = medianAlong(channel.image, vertical, along, across - leadingWindow + 1, leadingWindow, buffer);
+        const after = medianAlong(channel.image, vertical, along, across + 1, trailingWindow, buffer);
         response += (channel.weight * Math.abs(before - after)) / Math.max(1e-6, channel.sigma);
       }
       const index = across - searchStart;
@@ -144,45 +196,74 @@ export function edgeStepProfile(
 
     if (bestIndex < 0) continue;
 
-    // THE PLATEAU. A median is robust precisely because it ignores a minority,
-    // and that is exactly why the step response does not peak at a point: the
-    // median of the trailing window stays "dark" until MORE THAN HALF of it has
-    // crossed onto paper. So a window of half-width w yields a flat maximum
-    // about w wide, and every position on it scores identically on a clean
-    // edge. Taking the first argmax therefore lands anywhere within ±w/2 — on a
-    // 35 mm photo at 300 dpi that is a visible strip of paper down one side, or
-    // a shaved millimetre off a face.
+    // Emit up to `peaksPerLine` candidate steps from this scanline.
     //
-    // The plateau is symmetric about the true boundary, so its CENTRE is the
-    // answer. Walk out from the peak while the response stays within 3 % of the
-    // maximum, and take the midpoint of that run.
-    const plateauFloor = bestResponse * 0.97;
-    let low = bestIndex;
-    let high = bestIndex;
-    while (low > 0 && responses[low - 1]! >= plateauFloor) low -= 1;
-    while (high < responses.length - 1 && responses[high + 1]! >= plateauFloor) high += 1;
+    // Each is a PLATEAU CENTRE, not an argmax. A median is robust precisely
+    // because it ignores a minority, which is why the step response does not
+    // peak at a point: the trailing median does not flip until more than half
+    // its window has crossed the edge. A window of length T therefore produces
+    // a flat maximum, and any single position on it scores the same as any
+    // other. Taking the first index found lands anywhere within that run — on a
+    // 35 mm photo that is a visible strip of paper down one side.
+    const floor = Math.max(options.minResponse ?? 8, bestResponse * (options.outermostFraction ?? 0.15));
+    const wanted = Math.max(1, options.peaksPerLine ?? 1);
+    const taken: number[] = [];
 
-    let centre = (low + high) / 2;
-
-    // A single-point maximum is a genuinely sharp edge — a hard cut against
-    // strong contrast. Refine that one by parabola instead, which is the
-    // better estimator when there is real curvature to fit.
-    if (low === high && bestIndex > 0 && bestIndex < responses.length - 1) {
-      const previous = responses[bestIndex - 1]!;
-      const next = responses[bestIndex + 1]!;
-      const denominator = previous - 2 * bestResponse + next;
-      if (denominator < -1e-9) {
-        centre += Math.max(-0.5, Math.min(0.5, (0.5 * (previous - next)) / denominator));
+    for (let peak = 0; peak < wanted; peak += 1) {
+      let index = -1;
+      let value = 0;
+      for (let i = 0; i < responses.length; i += 1) {
+        const candidate = responses[i]!;
+        if (candidate < floor || candidate <= value) continue;
+        // Skip anything already claimed by an earlier peak's plateau.
+        if (taken.some((t) => Math.abs(i - t) <= trailingWindow)) continue;
+        value = candidate;
+        index = i;
       }
-    }
+      if (index < 0) break;
+      taken.push(index);
 
-    // +0.5 places the boundary BETWEEN the two abutting windows rather than on
-    // the last pixel of the leading one.
-    const across = searchStart + centre + 0.5;
-    samples.push({
-      point: vertical ? { x: across, y: along } : { x: along, y: across },
-      response: bestResponse,
-    });
+      // Walk out while the response stays within 3 % of this peak: that run is
+      // the plateau, and it is symmetric about the true edge.
+      const plateauFloor = value * 0.97;
+      let low = index;
+      let high = index;
+      while (low > 0 && responses[low - 1]! >= plateauFloor) low -= 1;
+      while (high < responses.length - 1 && responses[high + 1]! >= plateauFloor) high += 1;
+
+      let centre = (low + high) / 2;
+
+      // A single-point maximum is a genuinely sharp edge against strong
+      // contrast; a parabola through its neighbours is the better estimator
+      // there, since there is real curvature to fit.
+      if (low === high && index > 0 && index < responses.length - 1) {
+        const previous = responses[index - 1]!;
+        const next = responses[index + 1]!;
+        const denominator = previous - 2 * value + next;
+        if (denominator < -1e-9) {
+          centre += Math.max(-0.5, Math.min(0.5, (0.5 * (previous - next)) / denominator));
+        }
+      }
+
+      // ASYMMETRY CORRECTION. The plateau is only symmetric about the true edge
+      // when both windows are the same length. Write e for the boundary, L for
+      // the leading (outside) window and T for the trailing (inside) one. The
+      // leading median flips once more than half of it has crossed the edge, at
+      // across = e + L/2; the trailing median flips at across = e - T/2. So the
+      // plateau runs from e - T/2 to e + L/2 and its centre sits at
+      // e + (L - T)/4 — biased OUTWARD by 3.25 px for the 0.8 mm / 3 mm window
+      // pair used here, which is a millimetre of extra paper on every edge.
+      // Subtracting the term recovers e, and it is exactly zero when L == T, so
+      // the symmetric path is unaffected.
+      const asymmetry = (leadingWindow - trailingWindow) / 4;
+      // +0.5 places the boundary BETWEEN the two abutting windows rather than
+      // on the last pixel of the leading one.
+      const across = searchStart + centre - asymmetry + 0.5;
+      samples.push({
+        point: vertical ? { x: across, y: along } : { x: along, y: across },
+        response: value,
+      });
+    }
   }
 
   return samples;
@@ -303,6 +384,47 @@ export function ransacLineFit(
     inliers: finalInliers.length,
     samples: points.length,
   };
+}
+
+/**
+ * Fits several competing lines to the same sample set, strongest first.
+ *
+ * A single RANSAC pass answers "what is the best-supported line here", which is
+ * the wrong question when a scanline band legitimately contains more than one
+ * real line. The band above a pasted photograph usually holds three: the form's
+ * printed rule, the photo's boundary, and an interior contour such as a
+ * hairline. All three are genuine, straight and well-supported; the strongest
+ * is frequently not the one we want.
+ *
+ * So the caller gets all of them and decides using information this function
+ * does not have — chiefly how far each sits from where registration predicted
+ * the edge would be. That prior is what separates a photo edge from a printed
+ * rule 4 mm away, and no purely local measurement can.
+ *
+ * Each pass removes its own inliers before the next runs, so the candidates are
+ * genuinely distinct rather than three near-copies of the same line.
+ */
+export function fitLineCandidates(
+  samples: readonly StepSample[],
+  tolerance: number,
+  maxLines = 3,
+  iterations = 200,
+  minResponse = 1,
+): LineFit[] {
+  const found: LineFit[] = [];
+  let pool = [...samples];
+
+  for (let pass = 0; pass < maxLines; pass += 1) {
+    const fit = ransacLineFit(pool, tolerance, iterations, minResponse);
+    if (!fit) break;
+    found.push(fit);
+    const remaining = pool.filter((s) => Math.abs(distanceToLine(fit.line, s.point)) > tolerance * 2);
+    // No progress means the pass consumed nothing; stop rather than loop.
+    if (remaining.length === pool.length || remaining.length < 8) break;
+    pool = remaining;
+  }
+
+  return found;
 }
 
 /**

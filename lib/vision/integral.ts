@@ -169,6 +169,27 @@ export function rectFillRatio(table: Integral, rect: Rect): number {
   return area === 0 ? 0 : rectSum(table, rect) / area;
 }
 
+/**
+ * Clamps to the table's bounds AND rounds to an integer.
+ *
+ * The rounding is not cosmetic. A summed-area table is indexed by integer
+ * position, and a fractional index reads `undefined` out of the Float64Array,
+ * which propagates as NaN through every statistic derived from it. Callers pass
+ * fractional rectangles constantly — `boundsOf()` on a fitted quadrilateral
+ * essentially always produces them — so without this the region detectors
+ * silently compute NaN features.
+ *
+ * NaN is uniquely dangerous here because of how it compares: `NaN < threshold`
+ * is false, so a NaN feature does not fail a rejection test, it SKIPS it. A
+ * detector whose content score is NaN accepts everything it is shown. That is
+ * the exact opposite of this product's core rule, and it fails silently.
+ *
+ * A non-finite input clamps to the low bound rather than propagating, so a
+ * corrupt rectangle yields an empty region and a zero statistic — a visible
+ * nothing rather than an invisible everything.
+ */
 function clamp(value: number, low: number, high: number): number {
-  return value < low ? low : value > high ? high : value;
+  if (!Number.isFinite(value)) return low;
+  const rounded = Math.round(value);
+  return rounded < low ? low : rounded > high ? high : rounded;
 }
