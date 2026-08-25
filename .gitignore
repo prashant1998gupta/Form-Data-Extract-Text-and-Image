@@ -1,0 +1,33 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+
+# next
+/.next/
+/out/
+next-env.d.ts
+*.tsbuildinfo
+
+# production
+/build
+
+# env — never commit
+.env
+.env.local
+.env*.local
+
+# vercel
+.vercel
+
+# os / editor
+.DS_Store
+Thumbs.db
+*.swp
+
+# test output
+/tests/__output__/
+/coverage
+
+# generated fixtures are large; regenerate with `npm run fixtures`
+/tests/fixtures/generated/
