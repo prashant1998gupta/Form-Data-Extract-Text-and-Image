@@ -60,6 +60,22 @@ const MIN_ASPECT = 0.35;
 const MAX_ASPECT = 2.9;
 
 /**
+ * Page-edge background support. See `edgeSupport` for why this exists at all.
+ *
+ * THREE of four, not four: one edge of a page photographed on a desk routinely
+ * runs off the frame, and demanding all four would refuse a large share of
+ * perfectly good captures. Three is still decisive against the failure — every
+ * severed-page variant measured exactly one.
+ *
+ * The drop is in grey levels and is deliberately generous. A page on a pale
+ * desk is the hard case; 25 levels is comfortably below the 130-170 measured on
+ * a real desk photo, and comfortably above sensor noise on blank paper.
+ */
+const MIN_SUPPORTED_EDGES = 3;
+const EDGE_BACKGROUND_DROP = 25;
+const EDGE_SUPPORT_FRACTION = 0.7;
+
+/**
  * Finds the page boundary.
  *
  * Works on a small copy — 700px on the long edge. Corner positions found there
@@ -177,7 +193,132 @@ export function detectPageQuad(gray: Gray): PageDetection {
     return { method: "full-frame", quad: fullFrame, skewDegrees: 0, confidence: 0.3, reason: check.reason };
   }
 
-  return { method: "perspective", quad, skewDegrees: 0, confidence: check.confidence, reason: "four page corners located" };
+  // Is there actually a BACKGROUND behind these edges? Everything above this
+  // point is shape reasoning, and shape cannot tell a sheet of paper from the
+  // larger half of a sheet of paper. See `edgeSupport`.
+  const support = edgeSupport(small, quad, scale);
+  if (support.supported < MIN_SUPPORTED_EDGES) {
+    return {
+      method: "full-frame",
+      quad: fullFrame,
+      skewDegrees: 0,
+      confidence: 0.4,
+      reason: `only ${support.supported} of 4 page edges have a background behind them (${support.detail}); reading the whole frame instead`,
+    };
+  }
+
+  return {
+    method: "perspective",
+    quad,
+    skewDegrees: 0,
+    // Confidence now carries evidence about the PAGE, not just about the shape.
+    // A quad with three supported edges is a weaker claim than one with four,
+    // and the number on screen should say so.
+    confidence: check.confidence * (support.supported / 4),
+    reason: `four page corners located, ${support.supported} of 4 edges backed by background`,
+  };
+}
+
+/**
+ * How many of the quad's four edges have a genuinely darker background outside
+ * them.
+ *
+ * THIS IS THE CHECK THAT WAS MISSING, and its absence is why the product
+ * reported maximum confidence on a quad covering 85 % of a sheet.
+ *
+ * `validateQuad` is not given the image. It cannot be: its signature takes a
+ * quad and two integers. So every question it asks is about SHAPE — is this
+ * rectangular, is it big enough, are the corners square — and shape is
+ * identical for the page and for the larger fragment of a page that has been
+ * cut in two. A full-bleed dark band across the sheet (a heavy rule under a
+ * printed header, a fold, a scanner-lid shadow) survives the `close(bright, 5)`
+ * at ~4.2 mm on A4, severs the bright mask into two components, and
+ * `components[0]` — largest by area — becomes "the page". The discarded strip
+ * is never mentioned. Measured: a 5 mm band is enough, a 3 mm band is absorbed.
+ *
+ * A real page edge has one property no internal line has: PAPER ON ONE SIDE AND
+ * NOT-PAPER ON THE OTHER. An ink line has paper on both sides. That is the
+ * whole test, and it separates the cases by a mile rather than by a threshold —
+ * measured 4 of 4 on a genuine desk photo (inside 194-229 against outside
+ * 54-64) versus 1 of 4 on every severed variant, including a soft grey shadow.
+ *
+ * An edge sampled off the frame counts as UNSUPPORTED, deliberately. A quad
+ * edge lying on the image border has no background behind it because the
+ * photograph does not extend far enough to show one, so the claim "this is
+ * where the paper stops" is exactly as unevidenced as it is for an ink line.
+ */
+function edgeSupport(small: Gray, quad: Quad, scale: number): { supported: number; detail: string } {
+  const q = [quad.tl, quad.tr, quad.br, quad.bl].map((p) => ({ x: p.x / scale, y: p.y / scale }));
+  const [tl, tr, br, bl] = q as [Point, Point, Point, Point];
+
+  // Sample this far either side of the edge, as a fraction of the short
+  // dimension. Far enough to clear the edge's own blur and any drop shadow,
+  // close enough to stay on the background rather than wandering onto the next
+  // object on the desk.
+  const offset = Math.max(3, Math.round(0.015 * Math.min(small.width, small.height)));
+  const centre = {
+    x: (tl.x + tr.x + br.x + bl.x) / 4,
+    y: (tl.y + tr.y + br.y + bl.y) / 4,
+  };
+
+  const edges: readonly (readonly [string, Point, Point])[] = [
+    ["top", tl, tr],
+    ["right", tr, br],
+    ["bottom", br, bl],
+    ["left", bl, tl],
+  ];
+
+  let supported = 0;
+  const notes: string[] = [];
+
+  for (const [name, a, b] of edges) {
+    const midX = (a.x + b.x) / 2;
+    const midY = (a.y + b.y) / 2;
+    let nx = centre.x - midX;
+    let ny = centre.y - midY;
+    const length = Math.hypot(nx, ny) || 1;
+    nx /= length;
+    ny /= length;
+
+    const inside: number[] = [];
+    const outside: (number | null)[] = [];
+    for (let t = 0.05; t <= 0.95; t += 0.01) {
+      const px = a.x + (b.x - a.x) * t;
+      const py = a.y + (b.y - a.y) * t;
+      const ix = Math.round(px + nx * offset);
+      const iy = Math.round(py + ny * offset);
+      const ox = Math.round(px - nx * offset);
+      const oy = Math.round(py - ny * offset);
+      inside.push(inBounds(small, ix, iy) ? small.data[iy * small.width + ix]! : 255);
+      outside.push(inBounds(small, ox, oy) ? small.data[oy * small.width + ox]! : null);
+    }
+
+    const insideMedian = median(inside);
+    let darker = 0;
+    for (const sample of outside) {
+      if (sample !== null && sample <= insideMedian - EDGE_BACKGROUND_DROP) darker += 1;
+    }
+    const fraction = darker / outside.length;
+    if (fraction >= EDGE_SUPPORT_FRACTION) {
+      supported += 1;
+    } else {
+      notes.push(name);
+    }
+  }
+
+  return {
+    supported,
+    detail: notes.length ? `${notes.join(", ")} unsupported` : "all supported",
+  };
+}
+
+function inBounds(image: Gray, x: number, y: number): boolean {
+  return x >= 0 && y >= 0 && x < image.width && y < image.height;
+}
+
+function median(values: readonly number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[sorted.length >> 1] ?? 0;
 }
 
 /**

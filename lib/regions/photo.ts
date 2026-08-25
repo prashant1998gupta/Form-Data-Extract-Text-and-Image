@@ -176,14 +176,28 @@ export function detectPhoto(input: PhotoDetectionInput): PhotoDetection {
     // An edge that could not be measured is NOT replaced by the template's own
     // edge. Substituting the prior here is exactly how a detector starts
     // returning the printed box every time and calling it a photograph.
-    const emptiness = assessEmptiness(input);
+    //
+    // AND THE REFUSAL MUST STAY WEAK. This branch used to call
+    // `assessEmptiness(input)` and, when the patch looked blank, promote itself
+    // to `box_empty` with the words "the photo box was located and is empty".
+    // This is the branch where the box was NOT located — that is what an
+    // unmeasurable edge means — so the object asserted both things at once: a
+    // `failedClause` of "boundary", whose own label reads "The element's
+    // outline could not be measured", beside a sentence claiming the box was
+    // located. Worse, `assessEmptiness` re-measured `input.expected`, the
+    // TEMPLATE'S PRIOR RECTANGLE, so on a misaligned page it was describing a
+    // patch of paper the operator never asked about. That is how a photograph
+    // plainly present on the form was reported as a box confidently verified
+    // empty.
+    //
+    // `box_empty` is now reachable only from the branch below, where all four
+    // edges fitted and the quad passed its checks — i.e. where a boundary
+    // really was located and there is something to be empty.
     return {
       found: false,
-      reason: emptiness.empty ? "box_empty" : "below_threshold",
+      reason: "below_threshold",
       failedClause: "boundary",
-      detail: emptiness.empty
-        ? "the photo box was located and is empty"
-        : `${unfitted.length} of 4 edges could not be measured (${unfitted.map((r) => r.side).join(", ")})`,
+      detail: `${unfitted.length} of 4 edges could not be measured (${unfitted.map((r) => r.side).join(", ")}), so nothing can be said about whether this box is empty`,
       edges: reports,
     };
   }

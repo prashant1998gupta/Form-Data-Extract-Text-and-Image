@@ -170,11 +170,31 @@ export function detectThumb(input: ThumbDetectionInput): ThumbDetection {
     //
     // Beyond the band the plateau falls away, which is what rejects a signature
     // (0.14 solidity, 0.10 fill, 5.75 aspect) on all three at once.
-    const total =
-      0.3 * plateau(solid, T.minSolidity, 0.95) +
-      0.28 * plateau(aspect, T.aspectRange.min, T.aspectRange.max) +
-      0.24 * plateau(fillRatio, T.fillRange.min, T.fillRange.max) +
-      0.18 * colourConsistency;
+    // CONJUNCTIVE FIRST, THEN WEIGHTED. `params.ts` rule 2 promises a gate that
+    // is conjunctive and biased toward refusing; the weighted sum below is
+    // neither. A term at exactly zero costs at most 0.30 of a 0.55 threshold,
+    // so a candidate can fail a shape test OUTRIGHT and still be accepted on
+    // the strength of the others. That is how a fragment of printed paragraph
+    // — aspect 2.70 against an admissible 0.55-1.80, i.e. a plateau of 0.00 —
+    // was delivered under the label "Thumb Impression".
+    //
+    // The hard bands are deliberately WIDER than the scoring plateaus, so this
+    // only rejects marks well outside the scoring range and leaves the plateau
+    // to express ordinary uncertainty in between. A dragged or rolled
+    // impression at 2.0:1 still scores; a line of text at 2.7:1 cannot.
+    const hardFail =
+      !(aspect >= T.hardAspectRange.min && aspect <= T.hardAspectRange.max)
+        ? `its shape is ${aspect.toFixed(1)} times as wide as it is tall, and a thumb impression is roughly square`
+        : !(fillRatio >= T.hardFillRange.min && fillRatio <= T.hardFillRange.max)
+          ? `only ${(fillRatio * 100).toFixed(0)}% of its outline is inked, which is not how a thumb prints`
+          : null;
+
+    const total = hardFail
+      ? 0
+      : 0.3 * plateau(solid, T.minSolidity, 0.95) +
+        0.28 * plateau(aspect, T.aspectRange.min, T.aspectRange.max) +
+        0.24 * plateau(fillRatio, T.fillRange.min, T.fillRange.max) +
+        0.18 * colourConsistency;
 
     const features: ThumbFeatures = {
       areaMM2: cluster.inkArea / (pxPerMM * pxPerMM),

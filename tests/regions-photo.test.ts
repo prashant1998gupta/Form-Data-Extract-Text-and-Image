@@ -189,7 +189,21 @@ test("blank paper produces no photograph", () => {
   });
 
   assert.ok(!detection.found, "blank paper must not produce a crop");
-  assert.equal(detection.reason, "box_empty");
+
+  // NOT `box_empty`, and the distinction is the point. This region is bare
+  // paper in the middle of the page with NO printed box in it, so there is no
+  // boundary to locate and nothing that could be "located and empty". The
+  // detector used to say it anyway: the branch that handles unmeasurable edges
+  // re-measured the template's prior rectangle, found no tone there, and
+  // promoted its own refusal to the strong claim. On a misaligned page that is
+  // how a photograph plainly present on the paper was reported as a box
+  // verified empty.
+  //
+  // `box_empty` now requires four fitted edges — see the unfilled-form case in
+  // regions-misaligned-claims.test.ts, where the printed box IS present and the
+  // strong claim is earned and kept.
+  assert.equal(detection.reason, "below_threshold");
+  assert.equal(detection.failedClause, "boundary");
 });
 
 test("a refusal still offers its best candidate as a suggestion, never as an answer", () => {

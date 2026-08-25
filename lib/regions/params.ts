@@ -222,6 +222,18 @@ export const REGION_PARAMS = Object.freeze({
     areaRangeMM2: Object.freeze({ min: 150, max: 1200 }),
     aspectRange: Object.freeze({ min: 0.55, max: 1.8 }),
     /**
+     * HARD rejects, applied before the weighted sum and with no compensation
+     * from the other terms.
+     *
+     * Deliberately wider than the scoring plateaus above. The plateau expresses
+     * "how thumb-like is this?"; these express "is this a thumb at all?", and
+     * conflating them is what let a fragment of printed paragraph at aspect
+     * 2.70 be delivered as a thumb impression. A dragged impression at 2.0:1
+     * scores poorly and is still offered; a line of text at 2.7:1 is refused.
+     */
+    hardAspectRange: Object.freeze({ min: 0.45, max: 2.2 }),
+    hardFillRange: Object.freeze({ min: 0.2, max: 0.9 }),
+    /**
      * Ink over convex-hull area, for ACCEPTING a thumb.
      *
      * The admissible range is wide, and deliberately so, because solidity here

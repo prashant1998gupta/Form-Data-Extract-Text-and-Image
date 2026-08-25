@@ -28,7 +28,7 @@ spec rather than a sketch.
 ```bash
 npm install
 npm run dev            # http://localhost:3000 — upload a form, see the crops
-npm test               # 135 tests
+npm test               # 149 tests
 npm run build
 
 node --experimental-strip-types scripts/demo-extract.ts    # crops to disk, scored
@@ -72,7 +72,9 @@ that the capture carries printed structure — lines of set type, or printed rul
 measured when it does not. The bar is deliberately on the floor, three of
 either: a wrong refusal here would reject a real patient's real form, which is
 worse than the bug it prevents. Every sample form clears it five times over, and
-the unfilled form still reports its three honest empty boxes.
+the unfilled form still reports all three elements as Not Detected — two as
+verifiably empty boxes and the thumb as below-threshold, which is a different
+and weaker claim, correctly made.
 
 Four more, in [`lib/regions/params.ts`](lib/regions/params.ts):
 
@@ -245,7 +247,7 @@ lib/regions/     photo · signature · thumb · postprocess · params
 lib/templates/   form definition; the hospital form is its first tenant
 lib/pipeline/    bytes -> crops, driven by a template
 app/             verification screen + /api/extract
-tests/           135 tests + the synthetic form generator
+tests/           149 tests + the synthetic form generator
 scripts/         demo-extract, preview-fixture
 docs/            product spec, architecture build spec
 ```
