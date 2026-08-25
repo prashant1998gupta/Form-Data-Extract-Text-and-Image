@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { prepareChannels } from "../lib/ink/normalize.ts";
 import { detectSignature, type SignatureDetection } from "../lib/regions/signature.ts";
+import { renderSignatureCrop } from "../lib/regions/postprocess.ts";
 import { containment, iou, type Rect } from "../lib/vision/types.ts";
 import { renderSyntheticForm, type SyntheticFormOptions } from "./helpers/synthetic-form.ts";
 
@@ -146,6 +147,57 @@ test("a refusal explains itself and never carries a mask", () => {
   assert.ok(!detection.found);
   assert.ok(detection.detail.length > 0);
   assert.ok(!("mask" in detection), "a refusal must not carry an image");
+});
+
+test("the returned mask is origin-aligned with the returned bounds", () => {
+  // This pairing is the whole contract between the detector and the renderer,
+  // and getting it wrong is silent: the renderer indexes outside the buffer,
+  // reads zero everywhere, and writes a completely blank signature PNG with no
+  // error raised anywhere. That shipped once.
+  const { detection } = detect({});
+  assert.ok(detection.found);
+
+  assert.equal(detection.mask.width, detection.bounds.width, "mask width must equal bounds width");
+  assert.equal(detection.mask.height, detection.bounds.height, "mask height must equal bounds height");
+
+  let inked = 0;
+  for (let i = 0; i < detection.mask.data.length; i += 1) if (detection.mask.data[i] !== 0) inked += 1;
+  assert.ok(inked > 100, `the mask must actually contain the signature's ink, found ${inked} pixels`);
+
+  // And the ink must reach both ends of the box, or the mask is offset.
+  const columnHas = (x: number) => {
+    for (let y = 0; y < detection.mask.height; y += 1) {
+      if (detection.mask.data[y * detection.mask.width + x] !== 0) return true;
+    }
+    return false;
+  };
+  assert.ok(columnHas(0) || columnHas(1), "ink must touch the left edge of its own bounding box");
+  const last = detection.mask.width - 1;
+  assert.ok(columnHas(last) || columnHas(last - 1), "ink must touch the right edge of its own bounding box");
+});
+
+test("the rendered signature is ink on transparency, not a blank rectangle", () => {
+  const { rgb } = renderSyntheticForm({});
+  const roi: Rect = { x: 96, y: 1330, width: 470, height: 130 };
+  const channels = prepareChannels(rgb, { pxPerMM: PX_PER_MM, imageRegions: [roi] });
+  const detection = detectSignature({ ink: channels.ink, roi, pxPerMM: PX_PER_MM, baselineY: 1444 });
+  assert.ok(detection.found);
+
+  const crop = renderSignatureCrop(rgb, detection.mask, detection.bounds, PX_PER_MM);
+
+  let opaque = 0;
+  for (let i = 3; i < crop.rgba.length; i += 4) if (crop.rgba[i]! > 128) opaque += 1;
+  assert.ok(opaque > 100, `expected visible ink, found ${opaque} opaque pixels`);
+
+  // Most of the crop must be TRANSPARENT — that is the deliverable. A mostly
+  // opaque result means paper is being carried along with the ink.
+  const total = crop.width * crop.height;
+  assert.ok(opaque < total * 0.35, `${((opaque / total) * 100).toFixed(0)}% opaque — this is a rectangle of paper, not ink`);
+
+  // The ink must keep its real colour. Rendering blue ballpoint as black is a
+  // visible falsification of the document.
+  const [r, g, b] = crop.inkColour;
+  assert.ok(b > r + 20 && b > g + 20, `ink read as rgb(${r},${g},${b}) — a blue pen must not come out neutral`);
 });
 
 test("detection is deterministic", () => {

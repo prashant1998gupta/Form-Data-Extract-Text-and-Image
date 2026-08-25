@@ -71,7 +71,18 @@ export interface SignatureFeatures {
 export type SignatureDetection =
   | {
       readonly found: true;
+      /** Ink extent in the SAME coordinate space as the `ink` mask that was passed in. */
       readonly bounds: Rect;
+      /**
+       * The signature's ink, cropped to exactly `bounds`.
+       *
+       * Origin-aligned with `bounds` by construction: `mask[0,0]` is the pixel
+       * at `(bounds.x, bounds.y)`, and `mask.width === bounds.width`. Returning
+       * it in the detector's internal ROI-local space instead is a coordinate
+       * bug waiting to happen — it did happen, and it produced a completely
+       * blank signature PNG with no error anywhere, because every index landed
+       * outside the mask and read zero.
+       */
       readonly mask: Mask;
       readonly features: SignatureFeatures;
       readonly confidence: number;
@@ -221,7 +232,7 @@ export function detectSignature(input: SignatureDetectionInput): SignatureDetect
   return {
     found: true,
     bounds,
-    mask: clusterMask(best.cluster, labelled, roi),
+    mask: clusterMaskAtBounds(best.cluster, labelled, roi),
     features,
     confidence,
     excludedAdjacentContent: best.excluded,
@@ -379,6 +390,15 @@ function clusterMask(cluster: Cluster, labelled: LabelledImage, roi: Rect): Mask
   }
   void roi;
   return out;
+}
+
+/**
+ * Crops a ROI-local cluster mask down to exactly the cluster's bounds, so the
+ * result is origin-aligned with the absolute `bounds` the caller receives.
+ */
+function clusterMaskAtBounds(cluster: Cluster, labelled: LabelledImage, roi: Rect): Mask {
+  const local = clusterMask(cluster, labelled, roi);
+  return cropMask(local, cluster.bounds);
 }
 
 function maskPoints(mask: Mask): Point[] {
