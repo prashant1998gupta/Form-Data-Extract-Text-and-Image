@@ -70,12 +70,28 @@ export function prepareChannels(rgb: Rgb, options: PrepareOptions): ScanChannels
 
   // --- TONE: gentle flattening that preserves large dark regions ------------
   //
-  // The kernel must be comfortably larger than the biggest image field, or the
-  // flattener treats a photograph's own body as background. 1.5x the largest
-  // declared region, floored so a template with no image fields still gets a
-  // sane value.
+  // `estimateIllumination`'s grid is the SIZE OF A CELL in pixels, so a bigger
+  // grid means a blurrier background estimate and gentler flattening. The
+  // kernel therefore has to GROW with the largest image field: a cell smaller
+  // than the photograph lets the estimator treat the photo's own body as local
+  // background and divide it away, leaving a washed region whose tone spread
+  // and chroma no longer look like a photograph at all.
+  //
+  // Getting this relationship backwards is subtle and expensive. It coupled
+  // fields to each other: adding a wide signature box to the template made the
+  // kernel SMALLER, which flattened harder, which desaturated the page enough
+  // to trip the greyscale branch, which capped the PHOTOGRAPH's confidence at
+  // 0.72 — measured, on a photo whose own detection scored 0.994. One field's
+  // geometry must never change another field's confidence.
+  //
+  // Capped at a quarter of the short edge so the estimate keeps enough locality
+  // to model a real shadow gradient. Within that cap the value is stable across
+  // templates, which is what decouples the fields again.
   const largestRegion = imageRegions.reduce((max, r) => Math.max(max, r.width, r.height), 0);
-  const toneGrid = Math.max(48, Math.round(Math.min(rgb.width, rgb.height) / Math.max(3, (largestRegion * 1.5) / 32)));
+  const toneGrid = Math.min(
+    Math.floor(Math.min(rgb.width, rgb.height) / 4),
+    Math.max(48, Math.round(largestRegion * 1.5)),
+  );
   const toneRgb = flattenRgb(rgb, toneGrid);
   const lab = labToImages(toneRgb);
 

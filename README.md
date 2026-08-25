@@ -16,22 +16,40 @@ transcribed in [docs/01-product-spec.md](docs/01-product-spec.md).
 
 ## Status
 
-**The region-extraction engine is built, measured and tested.** That is the
-hard part and the differentiator — it runs with **zero model calls**.
+**The region-extraction engine and the verification screen are built, measured
+and running.** That is the hard part and the differentiator — and it runs with
+**zero model calls**.
 
-Not yet built: the form builder, the Next.js surfaces, template registration
-against a stored layout, text extraction, and the confidence calibrator. The
-full plan is in [docs/02-architecture.md](docs/02-architecture.md), which is a
-build spec rather than a sketch.
+Not yet built: the no-code form builder, template registration against a stored
+layout, text extraction, persistence, and the confidence calibrator. The full
+plan is in [docs/02-architecture.md](docs/02-architecture.md), which is a build
+spec rather than a sketch.
 
 ```bash
 npm install
-npm test                                                  # 113 tests
-node --experimental-strip-types scripts/demo-extract.ts   # crops, no model calls
-node --experimental-strip-types scripts/preview-fixture.ts
+npm run dev            # http://localhost:3000 — upload a form, see the crops
+npm test               # 127 tests
+npm run build
+
+node --experimental-strip-types scripts/demo-extract.ts    # crops to disk, scored
+node --experimental-strip-types scripts/preview-fixture.ts # generate fixtures
 ```
 
-Node >= 22.13. No API key needed for anything above.
+Node >= 22.13. **No API key is needed for any of this** — nothing here calls a
+model. Three sample forms are bundled, including an unfilled one: anyone can
+demo a detector on a form with everything pasted on it, and the question a
+hospital actually asks is what happens when the patient brought no photograph.
+
+Measured through the running app, end to end:
+
+```
+filled, photographed on a desk   [perspective]  photo 99%  signature 99%  thumb 70% (review)
+photocopy                        [full-frame]   photo 72% (review, greyscale cap)
+                                                signature 94%  thumb 70% (review)
+unfilled                         [full-frame]   all three Not Detected, with reasons
+```
+
+~2.5 s per page on a laptop, most of it photometric normalisation.
 
 ---
 
@@ -209,7 +227,10 @@ lib/vision/      pure-TS image primitives, browser+server isomorphic
 lib/geometry/    Canonical Template Space — everything persisted is in mm
 lib/ink/         paper statistics, photometric normalisation, caption removal
 lib/regions/     photo · signature · thumb · postprocess · params
-tests/           113 tests + the synthetic form generator
+lib/templates/   form definition; the hospital form is its first tenant
+lib/pipeline/    bytes -> crops, driven by a template
+app/             verification screen + /api/extract
+tests/           127 tests + the synthetic form generator
 scripts/         demo-extract, preview-fixture
 docs/            product spec, architecture build spec
 ```

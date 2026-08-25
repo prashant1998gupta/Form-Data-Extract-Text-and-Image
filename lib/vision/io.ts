@@ -247,6 +247,28 @@ export async function encodeGrayPng(image: Gray): Promise<Buffer> {
     .toBuffer();
 }
 
+/**
+ * Encodes an RGB buffer to JPEG, optionally downscaled to a maximum long edge.
+ *
+ * For SCREEN PREVIEWS only — never for a delivered crop. The rectified A4 page
+ * is 1654x2339, and as a lossless PNG inlined into a JSON response it is about
+ * 8.7 MB of base64: slow to transfer, slow to parse, and entirely wasted on a
+ * pane a few hundred pixels wide. At 1400 px and quality 82 the same image is
+ * roughly a fortieth of that and visually identical at display size.
+ *
+ * Crops keep PNG. They are the artifact the hospital keeps, and JPEG's ringing
+ * around high-contrast ink is exactly the wrong compromise for a signature.
+ */
+export async function encodeRgbJpeg(image: Rgb, maxEdge?: number, quality = 82): Promise<Buffer> {
+  let pipeline = sharp(Buffer.from(image.data.buffer, image.data.byteOffset, image.data.byteLength), {
+    raw: { width: image.width, height: image.height, channels: image.channels },
+  });
+  if (maxEdge && Math.max(image.width, image.height) > maxEdge) {
+    pipeline = pipeline.resize(maxEdge, maxEdge, { fit: "inside", kernel: "lanczos3" });
+  }
+  return pipeline.jpeg({ quality, mozjpeg: true }).toBuffer();
+}
+
 /** Encodes a working-resolution RGB buffer to PNG. */
 export async function encodeRgbPng(image: Rgb): Promise<Buffer> {
   return sharp(Buffer.from(image.data.buffer, image.data.byteOffset, image.data.byteLength), {

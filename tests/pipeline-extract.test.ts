@@ -149,6 +149,63 @@ test("the seeded template's photo field declares its physical size", async () =>
   assert.ok(photo.printedBorder, "the printed box is recorded separately from the pasted photo");
 });
 
+test("one field's geometry does not change another field's result", async () => {
+  // Fields must be independent. They were not: the tone-flattening kernel was
+  // derived from the largest declared image region with the relationship
+  // INVERTED, so adding a wide signature box shrank the kernel, flattened
+  // harder, desaturated the page enough to trip the greyscale branch, and
+  // capped the PHOTOGRAPH's confidence at 0.72 — on a photo whose own detection
+  // scored 0.994. Nothing about the photograph had changed.
+  //
+  // This compares the same scan analysed with only the photo field declared
+  // against all three declared. The photo's verdict must not move.
+  const { rgb } = renderSyntheticForm({ desk: 100, shadow: 0.3, noise: 0.03 });
+
+  const { prepareChannels } = await import("../lib/ink/normalize.ts");
+  const { detectPhoto } = await import("../lib/regions/photo.ts");
+  const { detectPageQuad } = await import("../lib/vision/page.ts");
+  const { warpQuadRgb } = await import("../lib/vision/warp-rgb.ts");
+  const { toGray } = await import("../lib/vision/gray.ts");
+  const { ctsSize, mmToCts, CTS_PX_PER_MM, A4 } = await import("../lib/geometry/frames.ts");
+
+  const detection = detectPageQuad(toGray(rgb));
+  const cts = ctsSize(A4);
+  const rectified = warpQuadRgb(rgb, detection.quad, cts.width, cts.height);
+
+  const fields = allFields(HOSPITAL_TEMPLATE);
+  const photoField = fields.find((f) => f.type === "photograph")!;
+  const expected = mmToCts(photoField.box!);
+  const everyImageRegion = fields.filter((f) => isImageField(f.type)).map((f) => mmToCts(f.box!));
+
+  const scoreWith = (regions: typeof everyImageRegion) => {
+    const channels = prepareChannels(rectified, { pxPerMM: CTS_PX_PER_MM, imageRegions: regions });
+    return detectPhoto({
+      lab: channels.lab,
+      texture: channels.texture,
+      ink: channels.ink,
+      paper: channels.paper,
+      expected,
+      sizeMM: { widthMM: 35, heightMM: 45 },
+      pxPerMM: CTS_PX_PER_MM,
+      printedBorder: mmToCts(photoField.printedBorder!),
+      pageSaturatedFraction: channels.saturatedFraction,
+    });
+  };
+
+  const alone = scoreWith([expected]);
+  const together = scoreWith(everyImageRegion);
+
+  assert.equal(alone.found, together.found, "declaring other fields changed whether the photo was found");
+  if (alone.found && together.found) {
+    assert.equal(alone.greyscale, together.greyscale, "declaring other fields flipped the greyscale branch");
+    assert.ok(
+      Math.abs(alone.confidence - together.confidence) < 0.05,
+      `photo confidence moved from ${alone.confidence.toFixed(3)} to ${together.confidence.toFixed(3)} ` +
+        "purely because other fields were declared",
+    );
+  }
+});
+
 test("extraction reports its own timings", async () => {
   const result = await run({});
   for (const stage of ["decode", "page", "normalise", "detect"]) {
