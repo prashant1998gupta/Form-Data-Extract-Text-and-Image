@@ -344,7 +344,10 @@ export default function ScanWorkbench() {
                  operator checking the crops and an operator trusting a label
                  that was never earned. */
               <p className="notice warn" role="alert" style={{ marginBottom: 16 }}>
-                <strong>This may not be the {result.template.name}.</strong>{" "}
+                {/* An em dash, not a full stop: `registration.detail` begins
+                    lower-case ("only 1 of 3 ..."), so a period here reads as a
+                    typo on the one screen whose whole job is to be believed. */}
+                <strong>This may not be the {result.template.name}</strong> &mdash;{" "}
                 {result.registration.detail}. The images below are shown as{" "}
                 <strong>unconfirmed candidates</strong> — check each one before using it, because
                 nothing here confirms which field it belongs to.
