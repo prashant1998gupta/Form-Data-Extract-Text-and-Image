@@ -412,8 +412,18 @@ function drawSignature(
     }
   }
   // The flourish: a long fast tail that leaves the box and crosses the rule.
-  for (let t = 0; t < 1; t += 0.004) {
-    const px = x + width * 0.2 + t * width * 0.85;
+  //
+  // The step must keep consecutive marks OVERLAPPING. At a coarser step the
+  // thin end of the tail is drawn as a dashed line rather than continuous ink,
+  // which is not what a pen does, and it fragments into sub-pixel components
+  // that any speckle filter correctly discards. That is a defect in the
+  // fixture, not in a detector — but it presents as a detector losing the last
+  // 6 mm of every flourish, which is exactly the kind of false signal a
+  // synthetic corpus exists to avoid.
+  const flourishLength = width * 0.85;
+  const flourishStep = 0.5 / flourishLength;
+  for (let t = 0; t < 1; t += flourishStep) {
+    const px = x + width * 0.2 + t * flourishLength;
     const py = y + height * 0.72 + Math.sin(t * Math.PI * 1.2) * height * 0.3;
     mark(px, py, t > 0.85 ? 1 : 2);
   }
