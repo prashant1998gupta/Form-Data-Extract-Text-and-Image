@@ -19,11 +19,17 @@
  * high-frequency texture energy, because emulsion and paper fibre never share a
  * grain. Usually there is a drop shadow on at least one edge too.
  *
- * And because registration tells us where the box is to a fraction of a
- * millimetre, we never have to FIND a rectangle. We measure four lines. That is
- * a much easier problem, it yields the paste angle for free, and it fails
- * loudly — an edge that cannot be measured is reported as such, rather than
- * being quietly replaced by the template's own edge.
+ * And because the template tells us roughly where the box is, we never have to
+ * FIND a rectangle. We measure four lines. That is a much easier problem, it
+ * yields the paste angle for free, and it fails loudly — an edge that cannot be
+ * measured is reported as such, rather than being quietly replaced by the
+ * template's own edge.
+ *
+ * The prior may be a REGISTERED box, accurate to a fraction of a millimetre, or
+ * one a person DRAGGED with a finger, accurate to a few. The detector is told
+ * which and widens its sigma and search band accordingly — see
+ * `PhotoDetectionInput.prior` below and `drawnPriorSigmaMM` in params.ts. With
+ * the registered prior applied to a drawn box it refuses at 4 mm of error.
  *
  * Appearance is still used, but only to ACCEPT OR REJECT the quadrilateral the
  * boundary fit produced. It never decides where the boundary is.

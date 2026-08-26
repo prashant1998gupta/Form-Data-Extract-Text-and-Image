@@ -17,12 +17,16 @@
  *
  * WHY 3500 PX, NOT 2400. The server analyses at 2400 px on the long edge
  * (`WORKING_EDGE`), and it is tempting to send exactly that and no more. But
- * crops are cut from the uploaded pixels, not from the analysis copy. An A4
+ * the delivered PHOTOGRAPH is cut from the uploaded pixels rather than from the
+ * analysis copy. Signature and thumb are not — they are built from a mask
+ * measured in the rectified page, so the extra resolution never reaches them,
+ * and this whole trade is made for the photograph alone. An A4
  * page at 3500 px on its long edge is 300 DPI of paper, which is exactly the
  * passport photograph's delivery resolution — so at 3500 px the portrait is
  * rendered 1:1 from pixels the phone really captured. At 2400 px the same
  * portrait is a 1.5x upscale of data we were handed for free and threw away.
- * 3500 px at quality 90 is 1.5-2.5 MB, comfortably inside the cap.
+ * 3500 px at quality 0.92 — the first rung of the ladder below, and in practice
+ * the only one used — is 1.5-2.5 MB, comfortably inside the cap.
  *
  * WHAT IS DELIBERATELY NOT DONE HERE. Nothing is analysed, measured or judged.
  * This resizes and re-encodes, and that is all. Every geometric decision stays

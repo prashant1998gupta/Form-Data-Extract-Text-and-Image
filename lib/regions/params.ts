@@ -12,10 +12,16 @@
  *    Qwen use three mutually incompatible conventions. None of them belongs on
  *    the path that decides where to cut a photograph.
  *
- * 2. **A wrong crop is worse than no crop.** The acceptance gate is
- *    conjunctive and deliberately biased toward false negatives. A miss is
- *    visible on the verification screen and takes one drag to fix; a plausible
- *    wrong crop slips through review and lands in a patient record.
+ * 2. **A wrong crop is worse than no crop.** HARD BANDS reject outright and
+ *    cannot be compensated for (`thumb.hardAspectRange`, `thumb.hardFillRange`,
+ *    the boundary gates in `photo.ts`). The weighted score only ranks and
+ *    thresholds what survives them — inside the bands a weak term can still be
+ *    bought off by strong ones, so the sum alone is NOT a conjunctive gate.
+ *    Stating it as though it were is how the thumb detector shipped without
+ *    one: a term at zero cost at most 0.30 of a 0.55 threshold, and a fragment
+ *    of printed paragraph at aspect 2.70 was delivered as a thumb impression.
+ *    Every gate is written as a negated `>=`, so a NaN rejects rather than
+ *    skipping the gate.
  *
  * 3. **"Not Detected" never carries a percentage**, and always carries one of
  *    exactly three reasons. We have no calibrated probability for a non-event,
@@ -39,9 +45,11 @@
  *
  * **Provenance.** These are starting values derived from the physical
  * properties they describe (photo sizes, pen widths, thumb-pad dimensions), not
- * measurements from a corpus. `scripts/tune.ts` refits them against the
- * synthetic corpus and a held-out real split. Until that has run, treat them as
- * defensible defaults rather than as evidence.
+ * measurements from a corpus. No tuning harness exists yet; a future
+ * `scripts/tune.ts` would refit them against the synthetic corpus and a
+ * held-out real split. Until it does, treat these as defensible defaults rather
+ * than as evidence — with the exception of the drawn-prior sweep below, which
+ * was measured.
  */
 
 export const REGION_PARAMS = Object.freeze({
@@ -135,6 +143,12 @@ export const REGION_PARAMS = Object.freeze({
      *
      * So 6 mm of hand-drawing error still yields a pixel-tight crop, and past
      * about 8 mm the honest answer is to ask the person to draw it again.
+     *
+     * THESE FIGURES ARE THE DETECTOR MEASURED ALONE, on the fixture at 150 dpi.
+     * End to end through the pipeline — rectified page, CTS resolution, a
+     * template built by `parseCustomTemplate` — the same sweep gives IoU
+     * 0.92-0.99 across 0-8 mm, dipping to ~0.92 at 2-3 mm. The pipeline number
+     * is the one to quote to anyone; this one is for tuning this constant.
      */
     drawnPriorSigmaMM: 8,
     drawnPriorBandMM: 14,
@@ -190,9 +204,19 @@ export const REGION_PARAMS = Object.freeze({
     /** Minimum ink to be a signature at all. Kept low so small initials survive. */
     minInkAreaMM2: 25,
     minWidthMM: 15,
-    /** Feature score needed to accept without external agreement. */
+    /**
+     * Feature score needed WHEN an independent detector agrees.
+     *
+     * These two were documented the wrong way round, which matters more than a
+     * typo usually would: `signature.ts` reads
+     * `external?.present ? scoreThreshold : scoreThresholdUnsupported`, so this
+     * lower bar applies only WITH agreement — and nothing anywhere supplies
+     * `external`. That makes 0.55 unreachable today while its comment named it
+     * as the one in force, so anyone tuning signature sensitivity would have
+     * moved this number and seen no effect whatsoever.
+     */
     scoreThreshold: 0.55,
-    /** Feature score that overrides an external detector's silence. */
+    /** Feature score needed with NO external agreement. The only one exercised in production. */
     scoreThresholdUnsupported: 0.7,
     /** Ink / convex-hull area. A signature is open; a thumb and a photo are not. */
     solidityRange: Object.freeze({ min: 0.25, max: 0.65 }),

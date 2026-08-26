@@ -4,8 +4,18 @@
 Next.js 16 (App Router) · TypeScript · Supabase · Vercel `bom1` · Node 24
 Status: **build spec**. This document supersedes the three candidate designs and the judge reviews. Where a judge raised a fatal flaw, §13 names it and states the resolution or accepts the risk explicitly.
 
-Repo root: `D:\Prashant_WorkSpace\Form Data Extract Text and Image`
-Existing assets this builds on: `lib/vision/` (~2,160 lines of tested pure-TS CV: `types.ts`, `gray.ts`, `integral.ts`, `threshold.ts`, `morphology.ts`, `components.ts`, `geometry.ts`, `io.ts`, `image-header.ts`) and `docs/01-product-spec.md`. This document is the source for `docs/02-architecture.md` through `docs/08-testing.md`.
+Existing assets this builds on: `lib/vision/` (now **16 files, ~4,986 lines** of tested pure-TS CV — the original nine plus `colour.ts`, `features.ts`, `lines.ts`, `cluster.ts`, `thinning.ts`, `page.ts`, `warp-rgb.ts`) and `docs/01-product-spec.md`.
+
+**This document is the ONLY design document that exists.** It was written as the source for `docs/03-data-model.md` through `docs/08-testing.md`; none of those were ever written, and `docs/01-product-spec.md` §6 now says so plainly rather than linking to six files that are not there. Do not regenerate those links from this line — write the file first, or leave the content here.
+
+> ### How to read this document
+>
+> **The prose is the PLAN. The `> **Status.**` line under a heading is the REPOSITORY.**
+> Where the two disagree, the status line is what is true today.
+>
+> - **BUILT** — implemented and tested.
+> - **SUBSTITUTED** — something cheaper is shipped that gates the same decision. Named so it reads as a decision rather than a gap, and so nobody rebuilds it by accident.
+> - **NOT BUILT** — as described, and not started.
 
 ---
 
@@ -46,6 +56,8 @@ Four frames. Confusing them is the single most common source of silent misalignm
 
 ### Stage 0 — Client capture and quality assessment (browser)
 
+> **Status.** SUBSTITUTED: [`lib/client/prepare-upload.ts`](../lib/client/prepare-upload.ts) resizes the capture to 3500 px and transcodes HEIC via the browser's own decoder — it exists because the 4.5 MB edge limit made it urgent, not because Stage 0 was built. NOT BUILT: every quality metric (`effectiveDpi`, sharpness ratio, `glareFrac`, `quadConfidence`), the advisory/blocking policy, `capture_tier`, the Web Worker preview loop, and client rectification. Nothing measures capture quality today.
+
 **What.** Live camera capture or gallery upload. Compute a quality report. Advise, and only hard-block at the floor where nothing can work.
 
 **Why.** Free compute; the fastest possible feedback loop is while the operator is still standing at the paper. But the judges were right that a hard gate is a product-killer: staff open links inside WhatsApp WebViews, on locked-down hospital tablets with camera permission denied, and they forward WhatsApp-recompressed 1 MP images. **The gallery/upload path is a first-class citizen, not a fallback.**
@@ -68,6 +80,8 @@ Four frames. Confusing them is the single most common source of silent misalignm
 ---
 
 ### Stage 1 — Direct-to-Storage upload and job creation (browser → server)
+
+> **Status.** NOT BUILT — no Supabase project, no signed upload, no `scans` row, no job runner. SUBSTITUTED: the browser downscales so the POST fits under the 4.5 MB cap. That workaround has a real cost recorded in [01-product-spec.md](01-product-spec.md) §5 — the capture is RE-ENCODED, so the Must item "the original image is stored permanently and unmodified" is currently moving away from satisfaction, and this stage is how it gets undone.
 
 **What.** Browser requests a signed upload URL, PUTs the original directly to Supabase Storage, then POSTs a small JSON job.
 
@@ -114,6 +128,8 @@ const orig: Rgb = rgbFrom(new Uint8ClampedArray(data), info.width, info.height, 
 ---
 
 ### Stage 3 — Page localisation (four hypotheses, no rotation of rasters)
+
+> **Status.** BUILT, with one addition this document did not specify: `edgeSupport()` in [`lib/vision/page.ts`](../lib/vision/page.ts) requires a darker background behind at least 3 of 4 quad edges before `perspective` is returned, and scales the reported confidence by the fraction supported. It exists because a full-bleed dark band across a sheet — a heavy header rule, a fold, a lid shadow — severs the bright mask, the larger fragment wins, and the old shape-only check returned maximum confidence on a quad covering 85 % of the page. Measured: a 5 mm band is enough; 3 mm is absorbed.
 
 **What.** Produce `H₀`, a coarse `ORIG → CTS` homography, or declare that the page boundary is unusable and hand off to content registration.
 
@@ -171,6 +187,8 @@ export function getCv() { return (cvPromise ??= require('@techstark/opencv-js'))
 ---
 
 ### Stage 5 — Registration trust gate (four independent check families)
+
+> **Status.** SUBSTITUTED, partially. Two cheaper gates ship and answer the same question — may template coordinates be trusted on this page? [`form-presence.ts`](../lib/regions/form-presence.ts) asks whether the capture is a printed form at all; [`template-anchors.ts`](../lib/regions/template-anchors.ts) asks whether the template's own declared `printedBorder`/`baselineMM` landmarks are where it says, which needs no stored reference render. NOT BUILT: the reprojection-residual family, the constellation check, the periodicity ambiguity test, and APAP. Neither shipped gate can CORRECT a misalignment — only notice one.
 
 **What.** Produce `STRICT | LOOSE | AMBIGUOUS | UNREGISTERED`. Nothing is cropped from template geometry until this passes.
 
@@ -265,6 +283,8 @@ Detailed separately because it is the product.
 ---
 
 ### Stage 9 — Field crops and text reading — **§4**
+
+> **Status.** NOT BUILT. No field on the form is read. `lib/text/` does not exist, no model provider is configured, and no API key is required to run anything in this repository.
 
 ---
 
@@ -1105,6 +1125,8 @@ Served **only** via short-TTL signed URLs (default 300 s). Storage RLS mirrors t
 
 ## 8. Module / file layout
 
+> **Status.** This tree is the INTENDED end state and most of it does not exist. What does: `lib/vision/` (16 files), `lib/ink/` (`normalize.ts`, `paper-stats.ts`, `text-lines.ts`), `lib/regions/` (`photo.ts`, `signature.ts`, `thumb.ts`, `postprocess.ts`, `params.ts`, plus two this tree never anticipated — `form-presence.ts` and `template-anchors.ts`), `lib/geometry/frames.ts`, `lib/pipeline/extract-regions.ts`, `lib/templates/` (`types.ts`, `seed.ts`, and the taught-template pair `custom.ts` + `drawn.ts`), `lib/client/prepare-upload.ts`, and in `app/`: `page.tsx`, `ScanWorkbench.tsx`, `TemplateEditor.tsx`, `api/extract/route.ts`. Everything else below — `lib/cv/`, `lib/registration/`, `lib/text/`, `lib/models/`, `lib/confidence/`, `lib/db|storage|auth|realtime/`, every admin and record route — is NOT BUILT. Note `lib/regions/edge-fit.ts` is SUBSTITUTED by `lib/vision/lines.ts`.
+
 ```
 app/
   (marketing)/page.tsx
@@ -1347,6 +1369,8 @@ golden:       nightly provider regression on 200 labelled field crops;
 ---
 
 ## 11. Build order
+
+> **Status.** Phases 0-2 are NOT complete as written — there is no Supabase project, no job runner, no OpenCV.js, no anchor atlas or homography refit. Phase 1's synthetic generator IS built ([`tests/helpers/synthetic-form.ts`](../tests/helpers/synthetic-form.ts)), though as a single module rather than `scripts/synth/*`. **Phase 3 is substantially complete and is what the product currently is** — photo, signature and thumb detection, the params, the three absence reasons, 178 tests. Phase 4 (text extraction) is NOT started. Phase 5's verify screen IS built, and its correction-capture half ships as the taught-template editor rather than as drag-to-correct plus a learning loop.
 
 Each phase produces something demonstrable to a non-engineer. No phase is longer than roughly three weeks. Nothing depends on a corpus that does not yet exist.
 

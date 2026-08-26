@@ -13,7 +13,17 @@ export const runtime = "nodejs";
  */
 export const maxDuration = 60;
 
-/** Bounds the request body. A 12 MP JPEG is 4-12 MB; 25 MB is generous headroom. */
+/**
+ * Defence in depth only — this 413 cannot fire for our own client.
+ *
+ * Vercel rejects any function request body over 4.5 MB at the edge before this
+ * handler runs (measured on the deployment: 2.99 MB succeeds, 5.82 MB returns
+ * 413 in half a second), and the browser caps its own uploads at 4 MB in
+ * `lib/client/prepare-upload.ts`. This bound catches a caller that bypasses
+ * both. The older rationale here — "a 12 MP JPEG is 4-12 MB, so 25 MB is
+ * generous headroom" — was the reasoning the edge limit invalidated, and read
+ * as though large phone photos upload fine.
+ */
 const MAX_BYTES = 25 * 1024 * 1024;
 
 /**

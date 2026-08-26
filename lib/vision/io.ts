@@ -22,7 +22,7 @@ import sharp from "sharp";
 
 import { toGray } from "./gray.ts";
 import { readImageHeader, type ImageFormat } from "./image-header.ts";
-import { rgbFrom, type Gray, type Rect, type Rgb } from "./types.ts";
+import { rgbFrom, type Gray, type Rgb } from "./types.ts";
 
 /** Hard ceilings. Anything beyond these is a decode bomb or a mistake, not a form. */
 export const MAX_INPUT_BYTES = 25 * 1024 * 1024;
@@ -35,9 +35,15 @@ export const MIN_INPUT_EDGE = 320;
  * 2400px on the long edge of an A4 page is ~200 DPI, which is comfortably above
  * what handwriting stroke analysis needs (a ballpoint stroke is 3-5px at this
  * scale, so stroke-width statistics are meaningful) and well below the point
- * where a serverless function starts running out of time and memory. Crops for
- * output are taken from the ORIGINAL pixels, never from this working copy — see
- * `extractCrop`.
+ * where a serverless function starts running out of time and memory.
+ *
+ * The delivered PHOTOGRAPH is re-sampled from the original capture rather than
+ * from this working copy, when the original is finer — see `decodeFullRgb` and
+ * the `PhotoSource` path in `lib/regions/postprocess.ts`, which composes the
+ * crop-to-page and page-to-original homographies into one resample. Signature
+ * and thumb are NOT: they are ink-on-transparency built from a mask measured in
+ * the rectified page, and upsampling that mask would soften the very edges the
+ * crop is made of.
  */
 export const WORKING_EDGE = 2400;
 
@@ -187,84 +193,6 @@ export async function decodeFullRgb(bytes: Uint8Array): Promise<Rgb> {
     .toBuffer({ resolveWithObject: true });
 
   return rgbFrom(new Uint8ClampedArray(data.buffer, data.byteOffset, data.byteLength), info.width, info.height, 3);
-}
-
-/**
- * Cuts a region out of the ORIGINAL bytes at full resolution.
- *
- * This is the whole reason `DecodedImage.scale` is carried around. Detection
- * runs on a 2400px working copy because that is fast; the passport photograph it
- * finds is then maybe 300x385 in that copy and 900x1150 in the original. Cropping
- * from the working copy and upscaling would hand the hospital a soft, mushy
- * portrait, which is a visibly worse product than the paper form it replaced.
- * So the box is scaled back up and the crop is taken from the source pixels.
- *
- * @param rect In WORKING-resolution coordinates. Converted internally.
- */
-export async function extractCrop(
-  bytes: Uint8Array,
-  decoded: Pick<DecodedImage, "scale" | "originalWidth" | "originalHeight">,
-  rect: Rect,
-  options: { rotateDegrees?: number; targetWidth?: number; format?: "png" | "jpeg"; quality?: number } = {},
-): Promise<{ buffer: Buffer; width: number; height: number; mimeType: string }> {
-  const { rotateDegrees = 0, targetWidth, format = "png", quality = 92 } = options;
-  const inverse = 1 / decoded.scale;
-
-  const left = Math.max(0, Math.round(rect.x * inverse));
-  const top = Math.max(0, Math.round(rect.y * inverse));
-  const width = Math.max(1, Math.min(decoded.originalWidth - left, Math.round(rect.width * inverse)));
-  const height = Math.max(1, Math.min(decoded.originalHeight - top, Math.round(rect.height * inverse)));
-
-  let pipeline = sharp(Buffer.from(bytes), { limitInputPixels: MAX_INPUT_PIXELS }).rotate();
-
-  if (Math.abs(rotateDegrees) > 0.1) {
-    // Deskewing a crooked pasted photo. Extract a padded region FIRST so the
-    // rotation has real pixels to draw from at the corners, rotate, then take
-    // the tight box out of the middle. Rotating the tight crop instead fills
-    // the corners with background and puts a white wedge on the result.
-    const pad = Math.ceil(Math.max(width, height) * 0.25);
-    const padLeft = Math.max(0, left - pad);
-    const padTop = Math.max(0, top - pad);
-    const padWidth = Math.min(decoded.originalWidth - padLeft, width + pad * 2);
-    const padHeight = Math.min(decoded.originalHeight - padTop, height + pad * 2);
-
-    const rotated = await pipeline
-      .extract({ left: padLeft, top: padTop, width: padWidth, height: padHeight })
-      .rotate(rotateDegrees, { background: "#ffffff" })
-      .toBuffer({ resolveWithObject: true });
-
-    // The rotation grows the canvas and re-centres the content; the region we
-    // want is the original box's centre offset, measured from the new centre.
-    const grownWidth = rotated.info.width;
-    const grownHeight = rotated.info.height;
-    const centreX = grownWidth / 2 + (left + width / 2 - (padLeft + padWidth / 2));
-    const centreY = grownHeight / 2 + (top + height / 2 - (padTop + padHeight / 2));
-
-    pipeline = sharp(rotated.data).extract({
-      left: Math.max(0, Math.min(grownWidth - 1, Math.round(centreX - width / 2))),
-      top: Math.max(0, Math.min(grownHeight - 1, Math.round(centreY - height / 2))),
-      width: Math.max(1, Math.min(grownWidth, width)),
-      height: Math.max(1, Math.min(grownHeight, height)),
-    });
-  } else {
-    pipeline = pipeline.extract({ left, top, width, height });
-  }
-
-  if (targetWidth && targetWidth !== width) {
-    pipeline = pipeline.resize(targetWidth, null, { kernel: "lanczos3", withoutEnlargement: false });
-  }
-
-  const encoded =
-    format === "jpeg"
-      ? await pipeline.jpeg({ quality, chromaSubsampling: "4:4:4" }).toBuffer({ resolveWithObject: true })
-      : await pipeline.png({ compressionLevel: 9 }).toBuffer({ resolveWithObject: true });
-
-  return {
-    buffer: encoded.data,
-    width: encoded.info.width,
-    height: encoded.info.height,
-    mimeType: format === "jpeg" ? "image/jpeg" : "image/png",
-  };
 }
 
 /** Encodes a working-resolution grayscale buffer to PNG. Debug and fixture output. */

@@ -1,15 +1,28 @@
 # FormLink
 
-Turn handwritten paper forms into verified digital records — and keep the
-original form archived.
+Turn handwritten paper forms into verified digital records.
 
-An organization builds its paper form once in a no-code builder (sections,
-fields, field types) and publishes it to a link. Staff open the link, photograph
-a filled-in form, and the AI populates the digital fields, **crops the pasted
+**What this is today.** Photograph a filled-in form and it **crops the pasted
 passport photograph, the signature and the thumb impression as separate
-images**, and shows everything for human verification before anything is saved.
+images**, then shows them for human verification. It works on any form: draw a
+box around each element once, and that form is read from then on.
 
-Spec: [`Doc/Form Data Extract Text and Image.pdf`](Doc/) ·
+**There is no AI in it.** Not a placeholder — a deliberate design. Nothing here
+calls a model of any kind. `sharp` decodes and resizes; everything else is
+pure-TypeScript computer vision written for this problem (thresholding,
+morphology, connected components, convex hull, RANSAC line fitting,
+homographies). When it reports 97 % on a photograph it has measured a step in
+lightness, chroma and texture across a physical boundary — it is not recognising
+anything, and it cannot read.
+
+**What the intended product adds, and this does not have yet.** The vision
+(below, and in the spec) is a no-code builder where an organization recreates
+its paper form as sections and typed fields, publishes it to a link, and has
+handwritten *text* read into those fields as well. None of that is built: there
+is no builder, no published links, no text extraction, no database, and nothing
+is stored anywhere. Read [Status](#status) before quoting any of it to anyone.
+
+Spec: [`Doc/Form Data Extract Text and Image.pdf`](<Doc/Form Data Extract Text and Image.pdf>) ·
 transcribed in [docs/01-product-spec.md](docs/01-product-spec.md).
 
 ---
@@ -23,14 +36,28 @@ part and the differentiator — and it runs with **zero model calls**.
 Any form works, not just the seeded one: photograph it, drag a box around the
 photo, signature and thumb, and it is extracted from then on. Boxes are stored
 in millimetres against the rectified page, so one drawn on a phone means the
-same thing on a scan next week. A box a few millimetres out still yields a crop
-at IoU 0.98 — the detector is told the geometry came from a finger rather than
-from registration, and widens its prior accordingly.
+same thing on a scan next week. The detector is told the geometry came from a
+finger rather than from registration and widens its prior accordingly, so a box
+a few millimetres out still yields a usable crop — **IoU 0.92–0.99 measured end
+to end through the pipeline across 0–8 mm of drawing error.** (The tighter
+0.98-and-up sweep recorded in [`params.ts`](lib/regions/params.ts) is the
+detector measured on its own; the pipeline figure is the one to quote, and it
+dips to ~0.92 around 2–3 mm.)
 
-Not yet built: the no-code form builder, template registration against a stored
-layout, text extraction, persistence, and the confidence calibrator. The full
-plan is in [docs/02-architecture.md](docs/02-architecture.md), which is a build
-spec rather than a sketch.
+**Not built.** Text extraction — no field on the form is *read*, only the three
+image regions are cropped. Persistence: nothing is saved anywhere, so the
+"original form archived" half of the product does not exist yet, and the client
+re-encodes the capture before upload, so even the bytes that reach the server are
+not the original ones. The no-code builder with sections and 17 typed field
+types (the taught-form editor covers only the three image regions). Published
+form links. Doctor and Patient views. The confidence calibrator. Template
+registration against a *stored blank* — [`template-anchors.ts`](lib/regions/template-anchors.ts)
+checks only that a template's own declared landmarks are where it says, which is
+a far weaker claim than the anchor-atlas registration the architecture describes.
+
+The full plan is in [docs/02-architecture.md](docs/02-architecture.md), which is
+a build spec rather than a sketch. It describes the finished system; most of it
+is still ahead.
 
 ```bash
 npm install
@@ -100,37 +127,55 @@ Four more, in [`lib/regions/params.ts`](lib/regions/params.ts):
 
 ## Measured accuracy
 
-Against the synthetic corpus, which carries exact ground truth. These are
-measurements from `scripts/demo-extract.ts`, not estimates.
+Against the synthetic corpus, which carries exact ground truth. **Every number
+below is printed by `node --experimental-strip-types scripts/demo-extract.ts`**
+— run it and check. Nothing here is an estimate, and nothing is quoted that the
+script does not produce.
+
+> An earlier version of this table was optimistic by 0.006–0.011 on every
+> photograph row, quoted two conditions the script never measured, and carried a
+> "max edge error" column that nothing in the repository computes. It was also
+> the one row-set that hid its worst case. The numbers are re-measured, the
+> missing condition is now a real variant, and the columns that could not be
+> reproduced are gone. A published accuracy figure no command reproduces is
+> indistinguishable from one that was invented.
 
 **Passport photograph** — IoU of the detected quadrilateral against the true
 physical boundary of the pasted photo:
 
-| Condition | IoU | Max edge error |
+| Condition | IoU | Confidence |
 |---|---|---|
-| Clean scan | 0.992 | 0.17 mm |
-| Registration prior 2.5 mm out | 0.991 | 0.21 mm |
-| Photocopy, greyscale photo | 0.984 | 0.38 mm |
-| Shadow gradient + noise | 0.983 | 0.33 mm |
-| Specular glare | 0.986 | 0.26 mm |
-| Page skewed 4.5° | 0.991 | 0.20 mm |
-| Photo pasted 6° crooked | rotation recovered as 5.60° | |
+| Clean scan | 0.985 | 0.93 |
+| Shadow gradient + noise | 0.973 | 0.96 |
+| Photocopy, greyscale photo | 0.978 | 0.72 |
+| Specular glare | 0.975 | 0.93 |
+| Page skewed 4.5° | 0.985 | 0.94 |
+| **Photo pasted 6° crooked** | **0.844** — rotation recovered as 5.6° | 0.94 |
 
-**Signature** — containment of the true ink, and crop area as a multiple of the
-signature's own extent (a crop that swallows the printed label fails even with a
-respectable IoU):
+The crooked row is the weakest and is stated rather than omitted. Rotation
+recovery works; the quad it fits to a rotated paste is measurably looser than
+one fitted to a square one, and no amount of confidence should disguise that.
 
-| Condition | Contains | Area |
-|---|---|---|
-| Clean | 0.986 | 0.99× |
-| Photocopy | 1.000 | 1.00× |
-| Shadow | 0.986 | 0.99× |
-| Glare | 0.986 | 0.99× |
+**Signature** — containment of the true ink. A crop that swallows the printed
+label fails even with a respectable IoU, so containment rather than IoU is the
+measure that matters:
 
-**Thumb impression** — containment 0.917–0.925 across clean, shadow and
-photocopy. Confidence is **hard-capped at 0.70 and review is always required**,
-because without ridge verification this detector cannot support a stronger
-claim. That is enforced in the detector, not left to the caller.
+| Condition | Contains |
+|---|---|
+| Clean | 0.986 |
+| Photocopy | 1.000 |
+| Shadow | 0.986 |
+| Glare | 0.986 |
+| **Page skewed 4.5°** | **0.751** |
+
+Skew is the signature's weak case too, and worth knowing before anyone photographs
+a form at an angle.
+
+**Thumb impression** — containment 0.917–0.925 across clean, shadow, glare and
+photocopy. **On the 4.5° skewed page it is missed entirely** (`below_threshold`).
+Confidence is **hard-capped at 0.70 and review is always required**, because
+without ridge verification this detector cannot support a stronger claim. That
+is enforced in the detector, not left to the caller.
 
 Ridge-frequency analysis is deliberately *not* used. Real stamp-pad impressions
 are usually over-inked into a solid smudge with no resolvable ridges; phone
@@ -189,9 +234,17 @@ was removed.
 
 ## Everything is measured against this scan
 
-There is **no absolute threshold anywhere** in the detection path. Every one is
-in millimetres, or a ratio against a statistic measured on blank paper in the
-same image ([`lib/ink/paper-stats.ts`](lib/ink/paper-stats.ts)).
+**Almost no absolute threshold exists in the detection path.** Every geometric
+one is in millimetres, and every response one is a ratio against a statistic
+measured on blank paper in the same image
+([`lib/ink/paper-stats.ts`](lib/ink/paper-stats.ts)).
+
+Two deliberate exceptions, named rather than glossed over: the binarisation mean
+offset (`ink.adaptiveMeanOffset`, a raw grey level, which runs inside
+`prepareChannels` for every detector), and the structural line and rule counts in
+[`form-presence.ts`](lib/regions/form-presence.ts) — those are counts rather
+than fractions on purpose, because "are there at least three lines of type on
+this page?" is the same claim on every capture of every form.
 
 "An edge is a step of at least 20 grey levels" is generous on a clean scan and
 impossible on a photocopy whose whole dynamic range is 40 levels. Both are
@@ -245,6 +298,8 @@ lib/client/      capture preparation in the browser (resize, HEIC via the
 lib/vision/      pure-TS image primitives, browser+server isomorphic
                  types gray integral threshold morphology components
                  geometry lines colour cluster thinning features
+                 page (page-quad detection + the edge-support gate)
+                 image-header (format sniffing before sharp sees the bytes)
                  warp-rgb (bicubic projective — sharp cannot do this)
                  io (sharp bridge; applies EXIF orientation)
 lib/geometry/    Canonical Template Space — everything persisted is in mm

@@ -16,8 +16,17 @@
  *      template coordinate now addresses the wrong part of it.
  *   3. NORMALISE photometrically and measure the paper, which is what every
  *      subsequent threshold is expressed relative to.
- *   4. DETECT each declared image field in its own region.
- *   5. RENDER the crops from the ORIGINAL pixels, not the working copy.
+ *   4. RECOGNISE the page — first that it is a printed form at all
+ *      (`form-presence.ts`), then that it is THIS form, by checking the
+ *      template's own declared landmarks (`template-anchors.ts`). No detector
+ *      runs without the first. No ABSENCE may be asserted without the second:
+ *      `withoutTemplateTrust()` demotes every absence to `geometry_unknown` and
+ *      marks any crop it found `unverifiedTemplate`.
+ *   5. DETECT each declared image field in its own region.
+ *   6. RENDER each crop. Only the PHOTOGRAPH is re-sampled from the original
+ *      capture, and only when that capture is finer than the rectified page;
+ *      signature and thumb are ink-on-transparency built from a mask measured
+ *      in the rectified page.
  */
 
 import { prepareChannels, type ScanChannels } from "../ink/normalize.ts";

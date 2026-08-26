@@ -22,9 +22,12 @@
  * failure as a crop that is confidently wrong, one step earlier.
  *
  * WHAT IS ACTUALLY CHECKED. Not identity — this does not verify that the page
- * is THE hospital form rather than some other form. That needs a stored
- * reference render and the anchor matching of `docs/02-architecture.md` Stage 4,
- * which is not built. It checks the far weaker, far cheaper claim that the page
+ * is THE hospital form rather than some other form. Full identity needs a
+ * stored reference render and the anchor matching of
+ * `docs/02-architecture.md` Stage 4, which is not built. A WEAKER identity check
+ * is: `template-anchors.ts` verifies that the template's own declared printed
+ * landmarks are where it says they are, needs no reference render, and runs
+ * immediately after this gate. This module answers only the prior question. It checks the far weaker, far cheaper claim that the page
  * carries PRINTED STRUCTURE: lines of set type, or long printed rules. That is
  * enough to separate a form from a wall, a hand, a blank sheet or a screenshot,
  * which is the failure actually reachable from the upload button.

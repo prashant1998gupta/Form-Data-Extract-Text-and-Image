@@ -42,8 +42,9 @@ field.
 > where each field is normally located on the page."
 
 This sentence is the single most important line in the document. It is the licence for
-template-based extraction, which is what makes the accuracy target reachable. See
-[04-region-extraction.md](04-region-extraction.md).
+template-based extraction, which is what makes the accuracy target reachable. The engine
+that exploits it is [`lib/regions/`](../lib/regions/); its design is
+[02-architecture.md](02-architecture.md) §3.
 
 ### 2.3 Detect photograph, signature & thumb impression
 From the same image, detect **visual** elements separately and crop them into their own
@@ -58,8 +59,9 @@ fields:
 > information."
 
 **This is a hard product rule, not a nicety.** A wrong crop is worse than no crop. It is
-enforced in code by the decision rule in [04-region-extraction.md](04-region-extraction.md)
-and by tests.
+enforced in code — the acceptance gates in [`lib/regions/params.ts`](../lib/regions/params.ts),
+the presence and identity gates in [`form-presence.ts`](../lib/regions/form-presence.ts) and
+[`template-anchors.ts`](../lib/regions/template-anchors.ts) — and by tests.
 
 ### 2.4 Verification screen
 Two-up: original uploaded form on the left, digitized information on the right. Every
@@ -222,25 +224,62 @@ budget. Accuracy is the goal, not speed and not cost.
 
 Derived from the above. Each maps to a test or a screen.
 
+Status as of the current commit, checked against the code rather than from
+memory. `~` means partly done, and says which part.
+
 ### Must
 - [ ] Org admin builds a form from sections + fields, no code, and publishes it to a link.
+      `~` A form can be TAUGHT by drawing boxes over it
+      ([`lib/templates/custom.ts`](../lib/templates/custom.ts),
+      [`app/TemplateEditor.tsx`](../app/TemplateEditor.tsx)) and persists in
+      localStorage. No sections, no typed text fields, no publishable link.
 - [ ] All 17 field types from §3.4 exist and render in the builder and the verify screen.
-- [ ] Staff capture via camera or file upload, on desktop and mobile.
+      Only the three image types are drawable or extractable.
+- [x] **Staff capture via camera or file upload, on desktop and mobile.**
+      `capture="environment"` plus a file input; verified on a 375 px viewport.
+      Captures are resized in the browser first
+      ([`lib/client/prepare-upload.ts`](../lib/client/prepare-upload.ts)) because
+      the host rejects bodies over 4.5 MB.
 - [ ] The **original image is stored permanently and unmodified** with the record.
+      **⚠ Currently moving AWAY from this, not toward it.** Nothing is stored at
+      all, and the browser now RE-ENCODES every capture before upload, so the
+      bytes the server sees are already not the original. That was the only way
+      to get phone photos past the 4.5 MB edge limit without a Storage bucket,
+      and it is an interim measure that must be UNDONE — see
+      [02-architecture.md](02-architecture.md) Stage 1, direct-to-Storage upload.
+      This is the one Must item where the shipped code regressed against the
+      requirement, so it is flagged rather than left as a silent empty box.
 - [ ] Extraction is constrained to the admin-defined field schema.
-- [ ] Photograph, signature and thumb impression are detected and cropped as separate images.
-- [ ] Absent elements report **Not Detected**. Nothing is ever fabricated.
-- [ ] Per-field confidence, with low-confidence fields flagged **Review Required**.
+      `~` True for the three image fields — only boxes that were drawn are
+      extracted. Meaningless for text until there is text extraction.
+- [x] **Photograph, signature and thumb impression are detected and cropped as separate images.**
+      The engine, and the differentiator. See [Measured accuracy](../README.md#measured-accuracy).
+- [x] **Absent elements report Not Detected. Nothing is ever fabricated.**
+      Three distinct reasons, and absence is only asserted once presence and
+      template identity are established ([`form-presence.ts`](../lib/regions/form-presence.ts),
+      [`template-anchors.ts`](../lib/regions/template-anchors.ts)).
+- [x] **Per-field confidence, with low-confidence fields flagged Review Required.**
+      Image fields only. A refusal never carries a percentage.
 - [ ] Verify screen: original left, editable digital form right.
-- [ ] No record is written without an explicit human Save.
+      `~` Original left, extracted elements right. Nothing is editable, because
+      there are no read values to edit.
+- [x] **No record is written without an explicit human Save.**
+      Trivially satisfied: nothing is written at all. Re-check when persistence lands.
 - [ ] Record stores: values, original scan, cropped images, documents, timestamp, form
       version used, and the user who processed it.
 - [ ] Hospital tenant renders Doctor View and Patient View from a saved record.
 - [ ] Patient receipt downloads and prints.
 
 ### Should
-- [ ] Staff can correct a crop by dragging its box on the original image.
-- [ ] A correction improves subsequent scans of the same form (template learning).
+- [x] **Staff can correct a crop by dragging its box on the original image.**
+      "Fix these boxes" on the verify screen opens the editor over the rectified
+      page. A box a few millimetres out still yields a usable crop, because the
+      detector is told the geometry came from a finger and widens its prior.
+- [x] **A correction improves subsequent scans of the same form (template learning).**
+      The simplest form of it: a taught template is saved and re-used. Not the
+      statistical learning-from-corrections loop of
+      [02-architecture.md](02-architecture.md) §6, and it does not improve on its
+      own — someone has to draw the boxes.
 - [ ] QR code on the patient receipt.
 
 ### Out of scope for the demo
@@ -249,12 +288,18 @@ beyond a documented limit, and any hospital-management feature not named above.
 
 ## 6. Where the rest of the design lives
 
-| Doc | Covers |
-|---|---|
-| [02-architecture.md](02-architecture.md) | Stack, deployment, module layout |
-| [03-data-model.md](03-data-model.md) | Postgres schema, RLS, Storage buckets |
-| [04-region-extraction.md](04-region-extraction.md) | Photo / signature / thumb detection — the core engine |
-| [05-text-extraction.md](05-text-extraction.md) | Field reading, validation, normalization |
-| [06-confidence.md](06-confidence.md) | How every percentage on screen is computed |
-| [07-templates.md](07-templates.md) | Template learning, registration, feedback loop |
-| [08-testing.md](08-testing.md) | Fixtures, synthetic forms, what is asserted |
+Only two documents exist. This table used to list seven, six of which had never
+been written — every one of those links was dead, which is a poor advertisement
+for a project whose central claim is that it does not assert things it has not
+established. The topics are real and still need writing; where the material
+already exists somewhere, this says where.
+
+| Doc | Covers | Status |
+|---|---|---|
+| [02-architecture.md](02-architecture.md) | Stack, deployment, module layout, and every pipeline stage in detail | **Written.** The build spec. |
+| `03-data-model.md` | Postgres schema, RLS, Storage buckets | Not written. Draft lives in [02-architecture.md](02-architecture.md) §7. |
+| `04-region-extraction.md` | Photo / signature / thumb detection — the core engine | Not written. The engine is BUILT; [02-architecture.md](02-architecture.md) §3 specifies it, and the code in [`lib/regions/`](../lib/regions/) carries the reasoning in its module headers. |
+| `05-text-extraction.md` | Field reading, validation, normalization | Not written, and **not built**. Specified in [02-architecture.md](02-architecture.md) §4. |
+| `06-confidence.md` | How every percentage on screen is computed | Not written. Specified in [02-architecture.md](02-architecture.md) §5. The calibrator is not built; the numbers currently shown are raw detector scores. |
+| `07-templates.md` | Template learning, registration, feedback loop | Not written. Specified in [02-architecture.md](02-architecture.md) §6. Partly built: forms can be taught by drawing ([`lib/templates/custom.ts`](../lib/templates/custom.ts)) and landmarks verified ([`lib/regions/template-anchors.ts`](../lib/regions/template-anchors.ts)). |
+| `08-testing.md` | Fixtures, synthetic forms, what is asserted | Not written. Specified in [02-architecture.md](02-architecture.md) §10. Built: 178 tests and the generator in [`tests/helpers/synthetic-form.ts`](../tests/helpers/synthetic-form.ts). |

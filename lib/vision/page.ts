@@ -39,8 +39,15 @@ export interface PageDetection {
   /** Rotation applied for the `skew` method, in degrees. Zero otherwise. */
   readonly skewDegrees: number;
   /**
-   * 0..1. How much to trust the geometry. Template registration refuses to run
-   * below ~0.5 and falls back to whole-page detection.
+   * 0..1. How much to trust this geometry, scaled by how many of the four page
+   * edges have a background behind them (`shape score x supported / 4`).
+   *
+   * NOTHING GATES ON THIS. It is reported to the operator as an alignment
+   * figure and read by tests; no pipeline branch compares it to a threshold.
+   * The comment here used to claim registration refuses below ~0.5, which was
+   * never enforced and became routinely false once edge support started scaling
+   * it — an ordinary three-of-four capture lands at 0.75 and nothing changes.
+   * Registration trust is decided by `lib/regions/template-anchors.ts`.
    */
   readonly confidence: number;
   /** Human-readable note, surfaced in the debug payload when a scan goes wrong. */

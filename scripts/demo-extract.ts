@@ -42,6 +42,11 @@ const variants: { name: string; options: SyntheticFormOptions }[] = [
   { name: "05-crooked-photo", options: { photoRotation: 6 } },
   { name: "06-nothing-pasted", options: { withPhoto: false, withSignature: false, withThumb: false } },
   { name: "07-signature-only", options: { withPhoto: false, withThumb: false } },
+  // Added because the README quoted numbers for both conditions while this
+  // script measured neither. A published accuracy figure that no command
+  // reproduces is indistinguishable from one that was made up, and this file is
+  // the thing the README points at when it says "measurements, not estimates".
+  { name: "08-skewed-page", options: { skew: 4.5, shadow: 0.2 } },
 ];
 
 await mkdir(outputDir, { recursive: true });

@@ -1,7 +1,7 @@
 /**
  * Templates taught by a person, and the validation that lets one be trusted.
  *
- * WHY THIS EXISTS. The extraction engine is good — 154 tests say so — and it
+ * WHY THIS EXISTS. The extraction engine is good — the test suite says so — and it
  * fails on a real user's form for exactly one reason: it is measuring that form
  * against coordinates belonging to a different one. The engine does not need to
  * be smarter. It needs to be told where things are.

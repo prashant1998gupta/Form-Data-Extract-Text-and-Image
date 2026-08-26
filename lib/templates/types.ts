@@ -7,10 +7,16 @@
  * "measure the four edges of the rectangle at 160.2 mm, 30.3 mm" — which is a
  * different and far more tractable problem.
  *
- * Positions are optional. A form can be published from the builder with no
- * geometry at all, in which case extraction falls back to whole-page search and
- * says so. Geometry arrives later — from the admin drawing boxes over a blank
- * scan, or learned from staff correcting crops on the first few real ones.
+ * Positions are optional. A form can be published with no geometry at all, in
+ * which case extraction REFUSES that field with `geometry_unknown`, lists its
+ * key in `fieldsWithoutGeometry`, and says so on screen. There is no whole-page
+ * fallback and no detector runs — an earlier version of this comment promised
+ * one, which would be a safety regression if anyone built it on the strength of
+ * the comment: a detector searching the whole page has no prior at all, and
+ * every refusal it made would be unanchored.
+ *
+ * Geometry arrives from the admin drawing boxes over the form
+ * (`lib/templates/custom.ts`), or later from staff correcting crops.
  *
  * The seventeen field types come from the spec. They are a closed set on
  * purpose: the extraction path branches on them, and a free-text "type" would
