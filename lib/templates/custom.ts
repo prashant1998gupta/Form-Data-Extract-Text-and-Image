@@ -56,7 +56,12 @@ export class TemplateError extends Error {
   }
 }
 
-/** The three image types a taught template may declare. Text fields need the reader, which does not exist yet. */
+/**
+ * The three image types a taught template may declare. The handwriting reader
+ * (`lib/reader/`) exists now, but the editor still draws only these three:
+ * a text field needs a label and a type as well as a box, which is builder
+ * UI this screen does not have yet.
+ */
 const DRAWABLE: readonly FieldType[] = ["photograph", "signature", "thumbImpression"];
 
 const LABELS: Readonly<Record<string, string>> = {

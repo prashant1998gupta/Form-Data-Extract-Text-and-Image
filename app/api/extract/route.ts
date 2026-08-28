@@ -1,6 +1,10 @@
 import "server-only";
 
 import { extractRegions } from "@/lib/pipeline/extract-regions";
+import { resolveReader } from "@/lib/reader/provider";
+import { admitReaderScan, scansPerMinute } from "@/lib/reader/throttle";
+import { readTextFields } from "@/lib/reader/read-text-fields";
+import { readableFields, type FieldReading } from "@/lib/reader/types";
 import { HOSPITAL_TEMPLATE, templateById } from "@/lib/templates/seed";
 import { parseCustomTemplate, TemplateError } from "@/lib/templates/custom";
 import { encodeRgbJpeg, ImageDecodeError } from "@/lib/vision/io";
@@ -101,7 +105,12 @@ export async function POST(request: Request): Promise<Response> {
     // JPEG, downscaled: this is a screen preview, not a stored artifact. As a
     // full-resolution PNG the same page is ~8.7 MB of base64 inlined into the
     // JSON, which is slow to transfer and parse and invisible at display size.
-    const pagePreview = await encodeRgbJpeg(rectified, 1400);
+    // The preview encode and the handwriting reader run concurrently: one is
+    // local CPU, the other is network wait, and neither reads the other's output.
+    const [pagePreview, text] = await Promise.all([
+      encodeRgbJpeg(rectified, 1400),
+      readHandwriting(rectified, template, result),
+    ]);
 
     return Response.json(
       {
@@ -163,6 +172,7 @@ export async function POST(request: Request): Promise<Response> {
           dataUrl: region.png ? `data:image/png;base64,${region.png.toString("base64")}` : undefined,
         })),
         fieldsWithoutGeometry: result.fieldsWithoutGeometry,
+        text,
         timings: result.timings,
       },
       { headers: { "Cache-Control": "no-store" } },
@@ -179,6 +189,132 @@ export async function POST(request: Request): Promise<Response> {
       "The form could not be processed. Try photographing it again with the whole page in frame.",
     );
   }
+}
+
+/**
+ * The handwriting section of the payload.
+ *
+ * `enabled` is whether a reader is configured at all — the UI uses it to say
+ * how to turn the feature on rather than pretending it does not exist.
+ * `skipped` names why nothing was attempted; `failure` appears when every
+ * field failed identically (a refused key, an unreachable provider), so the
+ * screen can say it once instead of eight times.
+ */
+interface TextPayload {
+  readonly enabled: boolean;
+  readonly attempted: boolean;
+  readonly provider?: string;
+  readonly model?: string;
+  readonly skipped?:
+    | "no_text_fields"
+    | "not_configured"
+    | "misconfigured"
+    | "not_a_form"
+    | "not_registered"
+    | "throttled";
+  readonly failure?: string;
+  readonly fields?: readonly ReturnType<typeof fieldPayload>[];
+  readonly ms?: number;
+}
+
+/**
+ * Runs the handwriting reader, when it should run.
+ *
+ * The gates mirror the image pipeline's own and exist for the same reason. No
+ * reading without form presence: coordinates into a photograph of a wall
+ * address nothing. No reading without registration: a text value is a LABELLED
+ * claim — "patientName is Anita" — and when the page has not been confirmed as
+ * this template, the label is exactly the part that has not been earned. The
+ * crops degrade to "unconfirmed candidates" in that situation; a value has no
+ * equivalent degraded presentation that is not just a wrong record waiting for
+ * a tired click, so no value is produced at all.
+ */
+async function readHandwriting(
+  rectified: Parameters<typeof readTextFields>[0]["rectified"],
+  template: Parameters<typeof readTextFields>[0]["template"],
+  result: Awaited<ReturnType<typeof extractRegions>>["result"],
+): Promise<TextPayload> {
+  const reader = resolveReader(process.env);
+  const declared = readableFields(template);
+  const enabled = reader.provider !== null;
+
+  if (declared.length === 0) {
+    return { enabled, attempted: false, skipped: "no_text_fields" };
+  }
+
+  // The PAGE gates come before the configuration gate, deliberately. On a
+  // capture that is not the form, "add an API key to have these fields
+  // transcribed" would be a false promise printed directly under the banner
+  // saying no fields were read — the page problem is the only problem, and it
+  // is stated once. Configuration only matters on a page that would be read.
+  if (!result.formPresence.recognised) {
+    return { enabled, attempted: false, skipped: "not_a_form" };
+  }
+  if (!result.registration.registered) {
+    return { enabled, attempted: false, skipped: "not_registered" };
+  }
+
+  if (!reader.provider) {
+    // `reason` distinguishes "never configured" from "configured wrongly", and
+    // it is phrased for exactly this log line. A typo'd FORMLINK_TEXT_PROVIDER
+    // that silently presented as "no key set" cost its operator the feature.
+    if (reader.misconfigured) console.warn(`handwriting reader disabled: ${reader.reason}`);
+    return { enabled: false, attempted: false, skipped: reader.misconfigured ? "misconfigured" : "not_configured" };
+  }
+  const meta = { enabled: true, provider: reader.provider.name, model: reader.provider.model };
+
+  // The endpoint is unauthenticated, so every admitted scan is somebody's
+  // metered spend. The bound is per instance and says so where it is defined —
+  // see lib/reader/throttle.ts for what it is and, more importantly, is not.
+  if (!admitReaderScan({ scansPerMinute: scansPerMinute(process.env) })) {
+    return { ...meta, attempted: false, skipped: "throttled" };
+  }
+
+  const started = performance.now();
+  let readings: FieldReading[];
+  try {
+    readings = await readTextFields({ rectified, template, provider: reader.provider });
+  } catch (error) {
+    // The orchestrator isolates per-field faults, so reaching here means the
+    // scan-level machinery failed. The crops above are unaffected; say so.
+    console.error("handwriting reader failed", error);
+    return { ...meta, attempted: true, failure: "the reader failed unexpectedly" };
+  }
+
+  const failures = readings.map((reading) => reading.failure).filter((f): f is string => Boolean(f));
+  const sharedFailure =
+    failures.length === readings.length && new Set(failures).size === 1 ? failures[0] : undefined;
+
+  return {
+    ...meta,
+    attempted: true,
+    failure: sharedFailure,
+    fields: readings.map(fieldPayload),
+    ms: Math.round(performance.now() - started),
+  };
+}
+
+function fieldPayload(reading: FieldReading) {
+  return {
+    fieldId: reading.fieldId,
+    key: reading.key,
+    label: reading.label,
+    type: reading.type,
+    required: reading.required,
+    options: reading.options,
+    hint: reading.hint,
+    value: reading.value,
+    blank: reading.blank,
+    notInOptions: reading.notInOptions,
+    failure: reading.failure,
+    // Every model-read value requires review. Constant by design, and sent
+    // anyway so the client renders policy rather than embedding it.
+    needsReview: true,
+    box: reading.regionInPage,
+    evidence: reading.evidenceJpeg
+      ? `data:image/jpeg;base64,${reading.evidenceJpeg.toString("base64")}`
+      : undefined,
+  };
 }
 
 /** Axis-aligned overlay rectangle in rectified-page pixels, when there is one. */

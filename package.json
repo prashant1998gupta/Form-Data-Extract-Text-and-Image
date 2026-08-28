@@ -15,6 +15,7 @@
     "fixtures": "node --experimental-strip-types scripts/preview-fixture.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.122.0",
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.112.3",
     "next": "16.3.2",

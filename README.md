@@ -4,23 +4,29 @@ Turn handwritten paper forms into verified digital records.
 
 **What this is today.** Photograph a filled-in form and it **crops the pasted
 passport photograph, the signature and the thumb impression as separate
-images**, then shows them for human verification. It works on any form: draw a
-box around each element once, and that form is read from then on.
+images**, and — when an AI key is configured — **reads the handwritten text
+fields** and presents every value for human verification beside the exact crop
+it was read from. It works on any form: draw a box around each element once,
+and that form is read from then on.
 
-**There is no AI in it.** Not a placeholder — a deliberate design. Nothing here
-calls a model of any kind. `sharp` decodes and resizes; everything else is
-pure-TypeScript computer vision written for this problem (thresholding,
-morphology, connected components, convex hull, RANSAC line fitting,
-homographies). When it reports 97 % on a photograph it has measured a step in
-lightness, chroma and texture across a physical boundary — it is not recognising
-anything, and it cannot read.
+**There is exactly one model call in it, and it is optional.** Everything
+geometric is a deliberate no-AI design: `sharp` decodes and resizes, and every
+measurement is pure-TypeScript computer vision written for this problem
+(thresholding, morphology, connected components, convex hull, RANSAC line
+fitting, homographies). When it reports 97 % on a photograph it has measured a
+step in lightness, chroma and texture across a physical boundary — it is not
+recognising anything. The one thing that machinery cannot do is *read*, so
+handwritten text goes to a vision model (`lib/reader/`) under a deliberately
+narrow contract: **the model supplies values, never geometry**, one field per
+request, from a crop this pipeline cut deterministically. No key, no model
+call — and the app runs exactly as before.
 
 **What the intended product adds, and this does not have yet.** The vision
 (below, and in the spec) is a no-code builder where an organization recreates
-its paper form as sections and typed fields, publishes it to a link, and has
-handwritten *text* read into those fields as well. None of that is built: there
-is no builder, no published links, no text extraction, no database, and nothing
-is stored anywhere. Read [Status](#status) before quoting any of it to anyone.
+its paper form as sections and typed fields and publishes it to a link. None of
+that is built: there is no builder, no published links, no database, and
+nothing is stored anywhere. Read [Status](#status) before quoting any of it to
+anyone.
 
 Spec: [`Doc/Form Data Extract Text and Image.pdf`](<Doc/Form Data Extract Text and Image.pdf>) ·
 transcribed in [docs/01-product-spec.md](docs/01-product-spec.md).
@@ -44,8 +50,16 @@ to end through the pipeline across 0–8 mm of drawing error.** (The tighter
 detector measured on its own; the pipeline figure is the one to quote, and it
 dips to ~0.92 around 2–3 mm.)
 
-**Not built.** Text extraction — no field on the form is *read*, only the three
-image regions are cropped. Persistence: nothing is saved anywhere, so the
+**Built, behind a key.** Handwritten text extraction for every text field the
+template declares with geometry — the seeded hospital form's eight, today. Set
+`GROQ_API_KEY` or `ANTHROPIC_API_KEY` (see [Reading the handwritten
+text](#reading-the-handwritten-text)) and each field is transcribed by a vision
+model and shown for review beside the exact crop it was read from. Without a
+key the section says so and everything else runs unchanged. Taught forms are
+still image-only: the editor draws three boxes and collects no labels or types,
+so a taught template declares no text field for the reader to answer.
+
+**Not built.** Persistence: nothing is saved anywhere, so the
 "original form archived" half of the product does not exist yet, and the client
 re-encodes the capture before upload, so even the bytes that reach the server are
 not the original ones. The no-code builder with sections and 17 typed field
@@ -62,17 +76,20 @@ is still ahead.
 ```bash
 npm install
 npm run dev            # http://localhost:3000 — upload a form, see the crops
-npm test               # 178 tests
+npm test               # 216 tests
 npm run build
 
 node --experimental-strip-types scripts/demo-extract.ts    # crops to disk, scored
 node --experimental-strip-types scripts/preview-fixture.ts # generate fixtures
 ```
 
-Node >= 22.13. **No API key is needed for any of this** — nothing here calls a
-model. Three sample forms are bundled, including an unfilled one: anyone can
-demo a detector on a form with everything pasted on it, and the question a
-hospital actually asks is what happens when the patient brought no photograph.
+Node >= 22.13. **No API key is needed for any of the above** — the crops, the
+tests and the demo script call no model. An API key enables exactly one thing,
+the handwritten-text reader: copy `.env.example` to `.env.local` and set
+`GROQ_API_KEY` (free tier at console.groq.com/keys) or `ANTHROPIC_API_KEY`.
+Three sample forms are bundled, including an unfilled one: anyone can demo a
+detector on a form with everything pasted on it, and the question a hospital
+actually asks is what happens when the patient brought no photograph.
 
 Measured through the running app, end to end:
 
@@ -113,8 +130,8 @@ and weaker claim, correctly made.
 Four more, in [`lib/regions/params.ts`](lib/regions/params.ts):
 
 - **No model coordinate ever reaches a stored crop.** Vision models supply
-  search regions and classifications. Geometry comes from registration and
-  deterministic image processing.
+  search regions, classifications and — in the reader — transcribed values.
+  Geometry comes from registration and deterministic image processing.
 - **"Not Detected" never carries a percentage.** There is no calibrated
   probability for a non-event, and false precision destroys trust in every other
   number on screen.
@@ -232,6 +249,70 @@ transparent background** in the pen's own colour, which composites onto a
 discharge summary without a white box around it — only possible because the rule
 was removed.
 
+## Reading the handwritten text
+
+The one thing measurement cannot do is read, so reading is the one model call —
+and it is boxed in on every side (`lib/reader/`):
+
+**One field, one request, one crop.** Each text field's answer area is cut from
+the rectified page at its template-declared box — the same millimetre geometry,
+in the same canonical space, that anchors the photograph's search region —
+padded 2.5 mm for ascenders and overruns, and sent as its own request. The model is never shown the whole page and never asked which field a
+value belongs to: request N *is* field N, so a value cannot land under the
+wrong label by a model miscounting rows. The alternative — one page-sized
+request returning key–value pairs — asks the model to do attribution, which is
+geometry, which is the thing a model does not supply here.
+
+**The evidence is the model's own input.** The verify screen shows each value
+beside the exact crop the model read, byte for byte. Every value is editable
+and every value requires review — there is no confidence number that buys a
+value out of it, because no number on screen may be a model's opinion of
+itself.
+
+**Blank and unreadable are different answers.** `""` means the model asserts
+the box is empty — a positive claim about examined pixels. `null` means it
+declined to guess, and the screen says "could not be read — check the paper"
+with no percentage attached, for the same reason "Not Detected" never carries
+one. The prompt says it in so many words: a plausible wrong reading is worse
+than none.
+
+**No reading without identity.** Text is read only after the page passes both
+recognition gates — it is a printed form, and it is *this* form. A crop found
+on an unregistered page degrades honestly to an "unconfirmed candidate"; a text
+value has no honest degraded form, because a value is nothing but a labelled
+claim. So on an unregistered page no field is read at all, and the screen says
+why.
+
+**The reply is untrusted input.** It is parsed against a closed contract (one
+JSON object, one member), clamped, and mapped to a key the server chose —
+never a key the model returned. Handwriting is transcribed as content, never
+followed as instructions; the worst a hostile sentence on paper can achieve is
+appearing, faithfully transcribed, in its own box on a review screen.
+
+Providers: `GROQ_API_KEY` (default model `qwen/qwen3.6-27b` — Groq shut down
+both Llama 4 vision models in 2026, so the older IDs floating around no longer
+serve) or `ANTHROPIC_API_KEY` (default `claude-opus-5`). With both set, Claude
+is used unless `FORMLINK_TEXT_PROVIDER=groq`; `FORMLINK_TEXT_MODEL` overrides
+the model. Keys live in `.env.local`, server-side only — which reader runs is
+decided by the environment, never by anything in the request.
+
+**A key on a public deployment is spend anyone can trigger.** `/api/extract`
+has no authentication — nothing here does yet — so once a key is set, an
+anonymous POST of a registerable capture costs you eight metered vision calls,
+and the sample form that registers is served by the deployment itself. Three
+honest mitigations, in order of honesty: don't put a key on a public
+deployment; set a spend cap in the provider's console; and the built-in bound —
+at most `FORMLINK_TEXT_MAX_SCANS_PER_MINUTE` scans reach the model per minute
+(default 10, `0` disables), which is per serverless instance and is therefore a
+brake, not a lock. `lib/reader/throttle.ts` says exactly what it is and is not.
+The real fix is the authentication the roadmap already owes.
+
+One honest caveat about the bundled samples: their "handwriting" is generated
+pseudo-glyphs with the stroke statistics of writing but no letters in them
+(`tests/helpers/synthetic-form.ts` says so itself). A reader that reports them
+mostly unreadable is reading them correctly. Photograph a real filled-in form
+to see transcription work.
+
 ## Everything is measured against this scan
 
 **Almost no absolute threshold exists in the detection path.** Every geometric
@@ -304,6 +385,9 @@ lib/vision/      pure-TS image primitives, browser+server isomorphic
                  io (sharp bridge; applies EXIF orientation)
 lib/geometry/    Canonical Template Space — everything persisted is in mm
 lib/ink/         paper statistics, photometric normalisation, caption removal
+lib/reader/      the handwritten-text reader: one field, one request, one crop
+                 prompt · parse (reply trust boundary) · crop · provider
+                 groq · anthropic — enabled by an API key, absent without one
 lib/regions/     photo · signature · thumb · postprocess · params
                  form-presence   (is this a printed form at all?)
                  template-anchors (is it THIS form? absence needs an answer)
@@ -311,7 +395,7 @@ lib/templates/   form definition; the hospital form is its first tenant
                  custom + drawn — a form TAUGHT by drawing boxes on it
 lib/pipeline/    bytes -> crops, driven by a template
 app/             verification screen + /api/extract
-tests/           178 tests + the synthetic form generator
+tests/           216 tests + the synthetic form generator
 scripts/         demo-extract, preview-fixture
 docs/            product spec, architecture build spec
 ```

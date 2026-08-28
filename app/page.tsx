@@ -14,7 +14,8 @@ export default function Home() {
         </h1>
         <p>
           Photograph a filled-in form. The photograph, signature and thumb impression are cropped as
-          separate images — with no model calls.
+          separate images with no model calls — and the handwritten fields are read for review when
+          an AI key is configured.
         </p>
       </header>
 

@@ -74,6 +74,36 @@ type Region = {
   dataUrl?: string;
 };
 
+type TextField = {
+  fieldId: string;
+  key: string;
+  label: string;
+  type: string;
+  required?: boolean;
+  options?: string[];
+  hint?: string;
+  /** The transcription. `""` only with `blank: true`; `null` means it could not be read. */
+  value: string | null;
+  blank: boolean;
+  notInOptions?: boolean;
+  failure?: string;
+  needsReview: boolean;
+  box?: { x: number; y: number; width: number; height: number };
+  /** The exact crop the model was shown — the evidence the operator reviews against. */
+  evidence?: string;
+};
+
+type TextSection = {
+  enabled: boolean;
+  attempted: boolean;
+  provider?: string;
+  model?: string;
+  skipped?: "no_text_fields" | "not_configured" | "misconfigured" | "not_a_form" | "not_registered" | "throttled";
+  failure?: string;
+  fields?: TextField[];
+  ms?: number;
+};
+
 type Result = {
   template: { id: string; name: string; page: { widthMM: number; heightMM: number } };
   page: { method: string; confidence: number; reason: string; skewDegrees: number };
@@ -82,6 +112,7 @@ type Result = {
   rectified: { width: number; height: number; pxPerMM: number; dataUrl: string };
   regions: Region[];
   fieldsWithoutGeometry: string[];
+  text?: TextSection;
   timings: Record<string, number>;
 };
 
@@ -134,6 +165,14 @@ function statusMessage(status: number): string {
 export default function ScanWorkbench() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
+  // The operator's corrections to the transcribed values, keyed by fieldId.
+  // Held here rather than in the inputs' DOM for two reasons that both bit:
+  // an uncontrolled input keeps the PREVIOUS scan's value when a new result
+  // renders (defaultValue only applies on mount), and a round trip through the
+  // template editor unmounts the cards, silently reverting a corrected value
+  // to the misreading the operator already fixed — on the one screen whose
+  // whole job is to be believed. Cleared whenever a new result arrives.
+  const [textEdits, setTextEdits] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -196,6 +235,7 @@ export default function ScanWorkbench() {
       }
 
       setResult(payload as Result);
+      setTextEdits({});
     } catch (cause) {
       setError(
         cause instanceof UploadPrepareError
@@ -384,6 +424,26 @@ export default function ScanWorkbench() {
                 </span>
               ) : null,
             )}
+            {/* Text-field overlays are dashed and unlabelled: eight captioned
+                boxes on top of three captioned boxes turns the page into a
+                diagram of itself. The card list on the right names each one,
+                and the box here just shows where its evidence was cut. No
+                title tooltip either — .overlay has pointer-events: none, so a
+                title here would be an affordance that can never fire. */}
+            {(result.text?.fields ?? []).map((field) =>
+              field.box ? (
+                <span
+                  key={field.fieldId}
+                  className="overlay is-text"
+                  style={{
+                    left: `${(field.box.x / rectified.width) * 100}%`,
+                    top: `${(field.box.y / rectified.height) * 100}%`,
+                    width: `${(field.box.width / rectified.width) * 100}%`,
+                    height: `${(field.box.height / rectified.height) * 100}%`,
+                  }}
+                />
+              ) : null,
+            )}
           </figure>
           <div className="stats">
             <span>page: {page.method}</span>
@@ -442,6 +502,14 @@ export default function ScanWorkbench() {
               ))}
             </div>
 
+            {result.text && result.text.skipped !== "no_text_fields" && result.text.skipped !== "not_a_form" ? (
+              <TextFieldsSection
+                text={result.text}
+                edits={textEdits}
+                onEdit={(fieldId, value) => setTextEdits((current) => ({ ...current, [fieldId]: value }))}
+              />
+            ) : null}
+
             {result.fieldsWithoutGeometry.length > 0 ? (
               <p className="notice info" style={{ marginTop: 16 }}>
                 {result.fieldsWithoutGeometry.length} field
@@ -495,6 +563,173 @@ export default function ScanWorkbench() {
         </div>
       ) : null}
     </>
+  );
+}
+
+/**
+ * The handwritten fields, read by a vision model and presented for review.
+ *
+ * Three presentation rules, inherited from the image cards and enforced with
+ * the same seriousness:
+ *
+ * EVERY VALUE IS EDITABLE AND MARKED FOR REVIEW. The model proposes; the
+ * operator disposes. There is no confidence number that buys a value out of
+ * review, because no number on this screen may be a model's opinion of itself.
+ *
+ * BLANK AND UNREADABLE ARE DIFFERENT ANSWERS. "Read as blank" says nothing is
+ * written there — a positive claim. "Could not be read" says go and look at
+ * the paper. Collapsing them would launder uncertainty into fact.
+ *
+ * THE EVIDENCE IS THE MODEL'S OWN INPUT. The strip under each value is
+ * byte-for-byte the crop the model was shown, so the operator verifies the
+ * value against exactly what produced it.
+ */
+function TextFieldsSection({
+  text,
+  edits,
+  onEdit,
+}: {
+  text: TextSection;
+  edits: Record<string, string>;
+  onEdit: (fieldId: string, value: string) => void;
+}) {
+  // The page-level states outrank the configuration states: on an unregistered
+  // page the honest message is about the page, whatever the server env holds.
+  const notice =
+    text.skipped === "not_registered" ? (
+      <p className="notice warn" role="alert">
+        Not read. The page could not be confirmed as this template, and a value read from the wrong
+        form would land under the wrong label — the one mistake this screen exists to prevent.
+      </p>
+    ) : text.skipped === "misconfigured" ? (
+      <p className="notice warn" role="alert">
+        Not read — the reader is configured wrongly on the server. Check{" "}
+        <code>FORMLINK_TEXT_PROVIDER</code> against the API keys that are actually set; the server
+        log names the exact problem.
+      </p>
+    ) : text.skipped === "throttled" ? (
+      <p className="notice warn" role="alert">
+        Not read — this server has hit its reading limit for the minute. The crops above are
+        unaffected; scan again shortly.
+      </p>
+    ) : !text.enabled ? (
+      <p className="notice info" role="status">
+        Not read — no AI key is configured. Add <code>GROQ_API_KEY</code> (free at
+        console.groq.com/keys) or <code>ANTHROPIC_API_KEY</code> to <code>.env.local</code> and
+        restart to have these fields transcribed for review.
+      </p>
+    ) : text.failure ? (
+      <p className="notice warn" role="alert">
+        <strong>The fields could not be read</strong> &mdash; {text.failure}. The extracted images
+        above are unaffected.
+      </p>
+    ) : null;
+
+  const readerName = text.provider === "groq" ? "Groq" : text.provider === "anthropic" ? "Claude" : text.provider;
+
+  return (
+    <div className="text-fields">
+      <div className="text-fields-head">
+        <h3 className="text-fields-title">Handwritten fields</h3>
+        {text.attempted && text.provider ? (
+          <span className="chip" title={text.model}>
+            read by {readerName} · review each one
+          </span>
+        ) : null}
+      </div>
+
+      {notice ??
+        (
+          <div className="text-field-list">
+            {(text.fields ?? []).map((field) => (
+              <TextFieldCard key={field.fieldId} field={field} edit={edits[field.fieldId]} onEdit={onEdit} />
+            ))}
+          </div>
+        )}
+    </div>
+  );
+}
+
+function TextFieldCard({
+  field,
+  edit,
+  onEdit,
+}: {
+  field: TextField;
+  edit: string | undefined;
+  onEdit: (fieldId: string, value: string) => void;
+}) {
+  const inputId = `text-field-${field.fieldId}`;
+  const hasInput = !field.failure && field.value !== null;
+  // Everything the operator must weigh alongside the value — the blank claim,
+  // the option mismatch, the hint — is wired to the input via aria-describedby,
+  // not merely placed nearby: the review flow is tabbing input to input, and a
+  // flag only the eye can find is a flag a screen reader never gets.
+  const blankId = field.blank ? `${inputId}-blank` : undefined;
+  const optionsId = field.notInOptions ? `${inputId}-options` : undefined;
+  const hintId = field.hint ? `${inputId}-hint` : undefined;
+  const describedBy = [blankId, optionsId, hintId].filter(Boolean).join(" ") || undefined;
+
+  return (
+    <article className="text-field needs-review">
+      <div className="text-field-head">
+        {/* A label may only point at a control that exists; in the failure and
+            unreadable states there is no input, so the name is a plain span. */}
+        {hasInput ? (
+          <label className="text-field-name" htmlFor={inputId}>
+            {field.label}
+            {field.required ? " *" : ""}
+          </label>
+        ) : (
+          <span className="text-field-name">
+            {field.label}
+            {field.required ? " *" : ""}
+          </span>
+        )}
+        {field.blank ? (
+          <span className="chip" id={blankId}>
+            read as blank
+          </span>
+        ) : null}
+        {field.notInOptions ? (
+          <span className="chip review" id={optionsId}>
+            not among the printed choices
+          </span>
+        ) : null}
+      </div>
+
+      {field.failure ? (
+        <p className="text-field-note">{field.failure}.</p>
+      ) : field.value === null ? (
+        /* No percentage, ever: there is no calibrated probability for "I could
+           not read this", and false precision here would spend the trust every
+           other number on this screen depends on. */
+        <p className="text-field-note">Could not be read &mdash; check the paper.</p>
+      ) : (
+        <input
+          id={inputId}
+          type="text"
+          value={edit ?? field.value}
+          onChange={(event) => onEdit(field.fieldId, event.target.value)}
+          spellCheck={false}
+          aria-required={field.required || undefined}
+          aria-describedby={describedBy}
+        />
+      )}
+
+      {field.evidence ? (
+        <figure className="text-field-evidence">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={field.evidence} alt={`What was written in ${field.label}`} />
+        </figure>
+      ) : null}
+
+      {field.hint ? (
+        <p className="text-field-note" id={hintId}>
+          {field.hint}
+        </p>
+      ) : null}
+    </article>
   );
 }
 

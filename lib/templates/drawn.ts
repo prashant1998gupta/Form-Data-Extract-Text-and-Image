@@ -23,7 +23,11 @@
 
 import type { PageSizeKey } from "../geometry/frames.ts";
 
-/** The three elements a person can draw. Text fields need the reader, which does not exist yet. */
+/**
+ * The three elements a person can draw. The handwriting reader (`lib/reader/`)
+ * exists now, but a drawn text field also needs a label and a type, which the
+ * editor does not collect yet — so taught templates stay image-only.
+ */
 export type DrawnElement = "photograph" | "signature" | "thumbImpression";
 
 export interface DrawnBox {

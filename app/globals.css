@@ -289,6 +289,12 @@ h3 {
 .overlay.is-missing > span {
   background: var(--muted);
 }
+/* Text-field evidence boxes: present but quiet. Dashed and captionless so the
+   three image regions stay the loudest thing on the page. */
+.overlay.is-text {
+  border: 1.5px dashed var(--line-strong);
+  box-shadow: none;
+}
 
 /* --- extracted elements -------------------------------------------------- */
 
@@ -383,6 +389,90 @@ h3 {
 .chip.mono {
   font-family: var(--font-mono);
   font-weight: 500;
+}
+
+/* --- handwritten fields --------------------------------------------------- */
+
+.text-fields {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.text-fields-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.text-fields-title {
+  font-size: 15px;
+  font-weight: 700;
+}
+.text-fields > .notice {
+  margin-top: 0;
+}
+.text-field-list {
+  display: grid;
+  gap: 12px;
+}
+.text-field {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+/* Same review accent as an image region: a model-read value is never settled. */
+.text-field.needs-review {
+  box-shadow: inset 3px 0 0 var(--warn);
+}
+.text-field-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.text-field-name {
+  font-size: 13px;
+  font-weight: 700;
+}
+.text-field input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink);
+  /* 16px, not smaller: iOS Safari zooms the viewport on focusing any input
+     under 16px, and phone capture is this product's primary path. */
+  font: 500 16px/1.4 var(--font-ui);
+}
+.text-field input:focus-visible {
+  outline: 2px solid var(--brand-600);
+  outline-offset: 1px;
+}
+/* "Could not be read" is a result stated in words — neutral, never red, and
+   never accompanied by a number. */
+.text-field-note {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 13px;
+}
+.text-field-evidence {
+  margin: 8px 0 0;
+  padding: 4px;
+  border: 1px dashed var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+.text-field-evidence img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 72px;
+  object-fit: contain;
 }
 
 .notice {
