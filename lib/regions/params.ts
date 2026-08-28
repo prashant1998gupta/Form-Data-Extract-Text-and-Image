@@ -5,9 +5,10 @@
  * THE FIVE RULES THAT OVERRIDE EVERYTHING
  * ===========================================================================
  *
- * 1. **No model coordinate ever reaches a stored crop.** Vision-language models
- *    supply search regions and classifications. Geometry comes from
- *    registration and deterministic image processing. Anthropic's own
+ * 1. **No model coordinate ever reaches a stored crop.** A vision-language
+ *    model may supply, at most, search regions and classifications — today the
+ *    image pipeline calls none. Geometry comes from registration and
+ *    deterministic image processing. Anthropic's own
  *    documentation says Claude's coordinate outputs are approximate; Gemini and
  *    Qwen use three mutually incompatible conventions. None of them belongs on
  *    the path that decides where to cut a photograph. The handwriting reader

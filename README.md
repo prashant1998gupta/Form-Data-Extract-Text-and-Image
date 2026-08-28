@@ -6,8 +6,10 @@ Turn handwritten paper forms into verified digital records.
 passport photograph, the signature and the thumb impression as separate
 images**, and — when an AI key is configured — **reads the handwritten text
 fields** and presents every value for human verification beside the exact crop
-it was read from. It works on any form: draw a box around each element once,
-and that form is read from then on.
+it was read from. The image extraction works on any form: draw a box around
+each element once, and those crops are extracted from then on. (Text reading
+needs a template that declares text fields, which taught forms do not yet —
+see [Status](#status).)
 
 **There is exactly one model call in it, and it is optional.** Everything
 geometric is a deliberate no-AI design: `sharp` decodes and resizes, and every

@@ -234,7 +234,11 @@ memory. `~` means partly done, and says which part.
       [`app/TemplateEditor.tsx`](../app/TemplateEditor.tsx)) and persists in
       localStorage. No sections, no typed text fields, no publishable link.
 - [ ] All 17 field types from §3.4 exist and render in the builder and the verify screen.
-      Only the three image types are drawable or extractable.
+      `~` The three image types are drawable and extractable; every text type a
+      template declares with geometry is READ by the optional handwriting reader
+      ([`lib/reader/`](../lib/reader/), behind an API key) and rendered for
+      review. There is still no builder, so only the seeded template declares
+      text fields today.
 - [x] **Staff capture via camera or file upload, on desktop and mobile.**
       `capture="environment"` plus a file input; verified on a 375 px viewport.
       Captures are resized in the browser first
@@ -242,16 +246,21 @@ memory. `~` means partly done, and says which part.
       the host rejects bodies over 4.5 MB.
 - [ ] The **original image is stored permanently and unmodified** with the record.
       **⚠ Currently moving AWAY from this, not toward it.** Nothing is stored at
-      all, and the browser now RE-ENCODES every capture before upload, so the
-      bytes the server sees are already not the original. That was the only way
+      all, and the browser RE-ENCODES any capture over 4 MB or 3500 px on its
+      long edge before upload (smaller captures pass through untouched —
+      [`lib/client/prepare-upload.ts`](../lib/client/prepare-upload.ts)), so for
+      exactly the phone photos this requirement most concerns, the bytes the
+      server sees are already not the original. That was the only way
       to get phone photos past the 4.5 MB edge limit without a Storage bucket,
       and it is an interim measure that must be UNDONE — see
       [02-architecture.md](02-architecture.md) Stage 1, direct-to-Storage upload.
       This is the one Must item where the shipped code regressed against the
       requirement, so it is flagged rather than left as a silent empty box.
 - [ ] Extraction is constrained to the admin-defined field schema.
-      `~` True for the three image fields — only boxes that were drawn are
-      extracted. Meaningless for text until there is text extraction.
+      `~` True for images AND text: only declared boxes are extracted, each text
+      field is read in its own request against a key the server chose, and a
+      model can neither add a field nor re-address one. Unticked only because
+      the schema itself cannot yet be admin-defined beyond three drawn boxes.
 - [x] **Photograph, signature and thumb impression are detected and cropped as separate images.**
       The engine, and the differentiator. See [Measured accuracy](../README.md#measured-accuracy).
 - [x] **Absent elements report Not Detected. Nothing is ever fabricated.**
@@ -259,10 +268,16 @@ memory. `~` means partly done, and says which part.
       template identity are established ([`form-presence.ts`](../lib/regions/form-presence.ts),
       [`template-anchors.ts`](../lib/regions/template-anchors.ts)).
 - [x] **Per-field confidence, with low-confidence fields flagged Review Required.**
-      Image fields only. A refusal never carries a percentage.
+      Image fields only, and deliberately so for now: text values show NO
+      percentage and are ALWAYS review-required, because the only confidence a
+      single-pass reader could show is the model's opinion of itself, which
+      nothing on this screen is allowed to be. Real text confidence arrives
+      with the fusion machinery of [02-architecture.md](02-architecture.md) §5.
 - [ ] Verify screen: original left, editable digital form right.
-      `~` Original left, extracted elements right. Nothing is editable, because
-      there are no read values to edit.
+      `~` Original left; extracted elements and, with a key, every read text
+      value in an editable input beside the exact crop the model saw. Edits
+      survive a template-editor round trip but persist nowhere — there is no
+      record for them to land in yet.
 - [x] **No record is written without an explicit human Save.**
       Trivially satisfied: nothing is written at all. Re-check when persistence lands.
 - [ ] Record stores: values, original scan, cropped images, documents, timestamp, form
@@ -299,7 +314,7 @@ already exists somewhere, this says where.
 | [02-architecture.md](02-architecture.md) | Stack, deployment, module layout, and every pipeline stage in detail | **Written.** The build spec. |
 | `03-data-model.md` | Postgres schema, RLS, Storage buckets | Not written. Draft lives in [02-architecture.md](02-architecture.md) §7. |
 | `04-region-extraction.md` | Photo / signature / thumb detection — the core engine | Not written. The engine is BUILT; [02-architecture.md](02-architecture.md) §3 specifies it, and the code in [`lib/regions/`](../lib/regions/) carries the reasoning in its module headers. |
-| `05-text-extraction.md` | Field reading, validation, normalization | Not written, and **not built**. Specified in [02-architecture.md](02-architecture.md) §4. |
+| `05-text-extraction.md` | Field reading, validation, normalization | Not written. An interim single-pass reader IS built — [`lib/reader/`](../lib/reader/), documented in the [README](../README.md#reading-the-handwritten-text); the multi-reader fusion, validation and normalization remain specified-only in [02-architecture.md](02-architecture.md) §4. |
 | `06-confidence.md` | How every percentage on screen is computed | Not written. Specified in [02-architecture.md](02-architecture.md) §5. The calibrator is not built; the numbers currently shown are raw detector scores. |
 | `07-templates.md` | Template learning, registration, feedback loop | Not written. Specified in [02-architecture.md](02-architecture.md) §6. Partly built: forms can be taught by drawing ([`lib/templates/custom.ts`](../lib/templates/custom.ts)) and landmarks verified ([`lib/regions/template-anchors.ts`](../lib/regions/template-anchors.ts)). |
-| `08-testing.md` | Fixtures, synthetic forms, what is asserted | Not written. Specified in [02-architecture.md](02-architecture.md) §10. Built: 178 tests and the generator in [`tests/helpers/synthetic-form.ts`](../tests/helpers/synthetic-form.ts). |
+| `08-testing.md` | Fixtures, synthetic forms, what is asserted | Not written. Specified in [02-architecture.md](02-architecture.md) §10. Built: 216 tests and the generator in [`tests/helpers/synthetic-form.ts`](../tests/helpers/synthetic-form.ts). |

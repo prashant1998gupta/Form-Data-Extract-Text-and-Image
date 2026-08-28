@@ -284,7 +284,23 @@ Detailed separately because it is the product.
 
 ### Stage 9 — Field crops and text reading — **§4**
 
-> **Status.** NOT BUILT. No field on the form is read. `lib/text/` does not exist, no model provider is configured, and no API key is required to run anything in this repository.
+> **Status.** SUBSTITUTED, partially — an interim single-pass reader ships as
+> [`lib/reader/`](../lib/reader/) (README § Reading the handwritten text). What it does:
+> one request per declared text field, from a crop cut deterministically at the field's
+> template box on the rectified page; providers Groq (default `qwen/qwen3.6-27b`) or
+> Anthropic (`claude-opus-5`), chosen by `GROQ_API_KEY`/`ANTHROPIC_API_KEY` — with no key
+> the reader is off and nothing calls a model. Every value is review-required with its
+> evidence crop shown; blank (`""`) and unreadable (`null`) are distinct answers; no
+> reading happens unless form presence AND template registration pass; replies are parsed
+> as untrusted input; a 40 s scan budget, per-request timeouts and a per-instance scan
+> throttle bound cost. The Groq default coexists with §4.3's verdict deliberately: for a
+> zero-cost single-tenant demo its caveats are acceptable and the model is overridable
+> (`FORMLINK_TEXT_MODEL`); the production stance below stands. NOT BUILT: everything
+> else this section specifies — `lib/text/`, the three-reader fusion (Gemini primary,
+> Claude decorrelated, Azure lexical), 2-of-3 agreement, per-type validation and
+> normalisation, the INK-based hallucination and blank gates, per-character doubt
+> underlining, and every confidence number for text (the shipped reader displays none,
+> by design).
 
 ---
 
@@ -632,32 +648,32 @@ Legend: ✅ exists and is tested in `lib/vision/` · 🔨 to write in pure TS ·
 - [x] ✅ `otsuThreshold`, `binarize`, `sauvola`, `adaptiveMean`, `estimateIllumination`, `flattenIllumination`, `binarizeDocument`, mask set-ops — `threshold.ts`
 - [x] ✅ `dilate/erode/open/close` + rect variants, `removeRules`, `extractRules`, `boundary` — `morphology.ts`
 - [ ] 🔨 `morphologicalReconstruction(marker, mask)` — needed for rule-crossing stroke repair (§7 step f)
-- [ ] 🔨 `labToImages(rgb) → {L, a, b, chroma}` — sRGB→linear (0.04045/12.92) → XYZ D65 → Lab
-- [ ] 🔨 `whiteBalanceByPaper(rgb, inkMask)` — p95 per channel over non-ink
-- [ ] 🔨 `highFrequencyEnergy(gray)` — `|I − boxBlur3|` then 9×9 mean
+- [x] ✅ `labToImages(rgb) → {L, a, b, chroma}` — sRGB→linear (0.04045/12.92) → XYZ D65 → Lab — `colour.ts`
+- [x] ✅ `whiteBalanceByPaper(rgb, inkMask)` — p95 per channel over non-ink — `colour.ts`
+- [x] ✅ `highFrequencyEnergy(gray)` — `|I − boxBlur3|` then 9×9 mean — `colour.ts`
 
 **Components and shape**
 - [x] ✅ `connectedComponents` (union-find), `componentMask`, `componentsWithin`, `groupByProximity` — `components.ts`
 - [ ] 🔨 `completeLinkCluster(components, gapX_mm, gapY_mm, capRect)` — replaces `groupByProximity` for signatures
-- [ ] 🔨 `chamferDistanceTransform(mask)` — 3-4 two-pass; feeds stroke width and chamfer score
-- [ ] 🔨 `zhangSuenThin(mask)` + `skeletonBranches(skel)` → branch lengths, turning angles, sign changes
+- [x] ✅ shipped as `distanceTransform(mask)` — 3-4 two-pass; feeds stroke width and chamfer score — `features.ts`
+- [x] ✅ `zhangSuenThin(mask)` + branch metrics shipped as `skeletonShape(skel)` → branch lengths, turning angles, sign changes — `thinning.ts`
 - [x] ✅ `convexHull`, `minAreaRect`, `approxPolygon`, `orderQuad` — `geometry.ts`
 
 **Geometry and warping**
 - [x] ✅ `estimateHomography` (DLT), `multiply3`, `invert3`, `applyHomography`, `reprojectionError`, `warpQuad`, `warpPerspective` (Gray, bilinear), `quadOutputSize` — `geometry.ts`
-- [ ] 🔨 `warpPerspectiveRgb(orig, H, w, h, 'bicubic')` — Catmull-Rom a = −0.5, 4×4 taps, edge clamp. **Required because sharp cannot do a projective transform** — `sharp.affine()` takes a **2×2 matrix only**; maintainer confirmed 4-point projection is not supported and the request has been open since Feb 2020.
+- [x] ✅ shipped as `warpQuadRgb(...)` in `warp-rgb.ts` — Catmull-Rom a = −0.5, 4×4 taps, edge clamp. **Required because sharp cannot do a projective transform** — `sharp.affine()` takes a **2×2 matrix only**; maintainer confirmed 4-point projection is not supported and the request has been open since Feb 2020.
 - [ ] 🔨 `composeCrop(origRgb, quadMM, H, outDpi)` — the single-resample crop path
 - [ ] 🅾️ RANSAC homography, ORB pyramid, matchTemplate, HoughLinesP, APAP cell solve
 - [ ] 🌐 `image-js` `getPerspectiveWarp` + `transform` for the client preview
 
 **Detector-specific**
-- [ ] 🔨 `edgeStepProfile(detailBand, channelWeights, halfWindowMM)` → per-row argmax + response
-- [ ] 🔨 `ransacLineFit(points, tolMM, iters)` → line + inlier ratio (PROSAC ordering)
-- [ ] 🔨 `intersectLinesToQuad(l0..l3)`
-- [ ] 🔨 `paperStatistics(scan, templatePaperMask)` → σ_L, σ_C, σ_HF, varianceP85, MAD(Δ) — **the self-normalisation source; everything depends on it**
+- [x] ✅ `edgeStepProfile(detailBand, channelWeights, halfWindowMM)` → per-row argmax + response — `lines.ts`
+- [x] ✅ `ransacLineFit(points, tolMM, iters)` → line + inlier ratio (PROSAC ordering) — `lines.ts`
+- [x] ✅ `intersectLinesToQuad(l0..l3)` — `lines.ts`
+- [x] ✅ `paperStatistics(...)` — shipped as `lib/ink/paper-stats.ts` — **the self-normalisation source; everything depends on it**
 - [ ] 🔨 `tileMatchedDifference(scan, template, tileMM)` → `Δ` map (robust per-tile gain/offset)
-- [ ] 🔨 `strokeWidthStats(mask)` → median, CV via chamfer DT
-- [ ] 🔨 `pitchRegularity(mask)` → max normalised autocorrelation peak of column-sum profile, lag band
+- [x] ✅ `strokeWidthStats(mask)` → median, CV via chamfer DT — `features.ts`
+- [x] ✅ `pitchRegularity(mask)` → max normalised autocorrelation peak of column-sum profile, lag band — `thinning.ts`
 - [ ] 🔨 `ssimWithVarianceFloor(a, b, floor)` → `{ ssim, bothFlat: boolean }`
 - [ ] 🔨 `hungarian(costMatrix)` — n ≤ 8
 - [ ] 🔨 `moransI(residuals, positions, permutations)` — APAP trigger
@@ -669,7 +685,7 @@ Legend: ✅ exists and is tested in `lib/vision/` · 🔨 to write in pure TS ·
 
 **Explicitly not written:** SIFT/AKAZE (absent from the OpenCV.js build anyway), full 3-D dewarp, any background-removal network (every convenient one is AGPL or a proprietary Bria licence, and they are *salient-object matting* models solving a different problem — CLAHE → background division → adaptive threshold → morphological open → CC gets cleaner ink masks at ~1000× less weight and zero licence risk).
 
-**Count: 22 new pure-TS functions, 9 of them ≤ 40 lines.** That is a two-to-three week job on top of the existing 2,160 tested lines — not the 12,000–18,000 lines the judges correctly costed the hand-rolled-everything designs at, because ORB / RANSAC / matchTemplate / Hough / warp / CLAHE / distance-transform / inpaint come from OpenCV.js.
+**Count, as planned: 22 new pure-TS functions, 9 of them ≤ 40 lines, on top of the 2,160 tested lines that existed when this plan was written.** Most have since shipped — the unchecked 🔨 rows above are what remains — and note the plan's cost argument has partly inverted: two of the pieces this sentence originally deferred to OpenCV.js, the projective warp and the distance transform, were in the end written in pure TS anyway, while OpenCV.js itself has not been adopted at all.
 
 ---
 
@@ -1125,7 +1141,7 @@ Served **only** via short-TTL signed URLs (default 300 s). Storage RLS mirrors t
 
 ## 8. Module / file layout
 
-> **Status.** This tree is the INTENDED end state and most of it does not exist. What does: `lib/vision/` (16 files), `lib/ink/` (`normalize.ts`, `paper-stats.ts`, `text-lines.ts`), `lib/regions/` (`photo.ts`, `signature.ts`, `thumb.ts`, `postprocess.ts`, `params.ts`, plus two this tree never anticipated — `form-presence.ts` and `template-anchors.ts`), `lib/geometry/frames.ts`, `lib/pipeline/extract-regions.ts`, `lib/templates/` (`types.ts`, `seed.ts`, and the taught-template pair `custom.ts` + `drawn.ts`), `lib/client/prepare-upload.ts`, and in `app/`: `page.tsx`, `ScanWorkbench.tsx`, `TemplateEditor.tsx`, `api/extract/route.ts`. Everything else below — `lib/cv/`, `lib/registration/`, `lib/text/`, `lib/models/`, `lib/confidence/`, `lib/db|storage|auth|realtime/`, every admin and record route — is NOT BUILT. Note `lib/regions/edge-fit.ts` is SUBSTITUTED by `lib/vision/lines.ts`.
+> **Status.** This tree is the INTENDED end state and most of it does not exist. What does: `lib/vision/` (16 files), `lib/ink/` (`normalize.ts`, `paper-stats.ts`, `text-lines.ts`), `lib/regions/` (`photo.ts`, `signature.ts`, `thumb.ts`, `postprocess.ts`, `params.ts`, plus two this tree never anticipated — `form-presence.ts` and `template-anchors.ts`), `lib/geometry/frames.ts`, `lib/pipeline/extract-regions.ts`, `lib/templates/` (`types.ts`, `seed.ts`, and the taught-template pair `custom.ts` + `drawn.ts`), `lib/client/prepare-upload.ts`, `lib/reader/` (a module this tree never anticipated — the interim single-pass handwriting reader of Stage 9's status note: types, prompt, parse, crop, provider, provider-types, groq, anthropic, read-text-fields, throttle), and in `app/`: `page.tsx`, `ScanWorkbench.tsx`, `TemplateEditor.tsx`, `api/extract/route.ts`. Everything else below — `lib/cv/`, `lib/registration/`, `lib/text/` (the full fusion engine; `lib/reader/` is its substituted interim), `lib/models/`, `lib/confidence/`, `lib/db|storage|auth|realtime/`, every admin and record route — is NOT BUILT. Note `lib/regions/edge-fit.ts` is SUBSTITUTED by `lib/vision/lines.ts`.
 
 ```
 app/
@@ -1370,7 +1386,7 @@ golden:       nightly provider regression on 200 labelled field crops;
 
 ## 11. Build order
 
-> **Status.** Phases 0-2 are NOT complete as written — there is no Supabase project, no job runner, no OpenCV.js, no anchor atlas or homography refit. Phase 1's synthetic generator IS built ([`tests/helpers/synthetic-form.ts`](../tests/helpers/synthetic-form.ts)), though as a single module rather than `scripts/synth/*`. **Phase 3 is substantially complete and is what the product currently is** — photo, signature and thumb detection, the params, the three absence reasons, 178 tests. Phase 4 (text extraction) is NOT started. Phase 5's verify screen IS built, and its correction-capture half ships as the taught-template editor rather than as drag-to-correct plus a learning loop.
+> **Status.** Phases 0-2 are NOT complete as written — there is no Supabase project, no job runner, no OpenCV.js, no anchor atlas or homography refit. Phase 1's synthetic generator IS built ([`tests/helpers/synthetic-form.ts`](../tests/helpers/synthetic-form.ts)), though as a single module rather than `scripts/synth/*`. **Phase 3 is substantially complete and is what the product currently is** — photo, signature and thumb detection, the params, the three absence reasons, 216 tests. Phase 4 (text extraction) has its interim substitute: the single-pass reader of Stage 9's status note reads every declared text field behind an optional API key, always for review — the fusion, validation and confidence machinery this phase actually specifies is NOT started. Phase 5's verify screen IS built with editable text values (edits live only on the screen — nothing persists), and its correction-capture half ships as the taught-template editor rather than as drag-to-correct plus a learning loop.
 
 Each phase produces something demonstrable to a non-engineer. No phase is longer than roughly three weeks. Nothing depends on a corpus that does not yet exist.
 
@@ -1576,7 +1592,7 @@ Every flaw, and where it is resolved. Six are accepted risks, stated as such.
 | D1-10 | Latency 2–4× understated; integral-image rules self-contradictory | Single decode into a 36 MB buffer held for the job; CTS integrals explicitly budgeted (300 MB peak of 4 GB); realistic p50/p90 table published | 2.2 / 11 |
 | D1-11 | Thumb ridge analysis dead on phone captures | **Descoped from v1.** Blob + geometry + chroma, capped 0.70, always review. v1.2 gated on ≥350 dpi with a JPEG-8px notch and may only raise confidence | 3.3 |
 | D1-12 | Signature area cap has undefined behaviour | Defined: keep sub-cluster nearest the baseline anchor, drop the rest, `reason='adjacent_content_excluded'`, force review | 3.2 |
-| D1-13 | 3,500-line CV library and 50 constants are fantasy-scheduled | **Adopt `@techstark/opencv-js`** (13.3 MB, 153 ms init, measured); 22 new pure-TS functions on top of 2,160 existing tested lines; **14** tunable constants (rest self-normalised); synthetic generator supplies unlimited exact-ground-truth data | 3.5 / 9 / 10 |
+| D1-13 | 3,500-line CV library and 50 constants are fantasy-scheduled | **Adopt `@techstark/opencv-js`** (13.3 MB, 153 ms init, measured); 22 new pure-TS functions on top of the 2,160 tested lines existing at planning time; **14** tunable constants (rest self-normalised); synthetic generator supplies unlimited exact-ground-truth data. (Since overtaken: most of those functions shipped in pure TS and OpenCV.js was never adopted — see §3.5.) | 3.5 / 9 / 10 |
 | D1-14 | Client/server crop agreement is not independent evidence | **Removed from the confidence expression.** Diagnostic log only | 5.2 |
 | D1-15 | `skinFrac` contaminated by cream paper under tungsten | **Feature deleted.** Replaced by `chromaClusterCount` + `toneSpread`. Also removes the person-identification prompt hazard | 3.1 |
 | D2-1 | Rotation resolved by rotating an already-squashed raster | **Four cyclic corner orderings of the quad**, each yielding its own `H₀` | 2.3 |

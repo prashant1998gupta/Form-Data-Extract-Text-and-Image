@@ -125,9 +125,13 @@ export interface FormTemplate {
   readonly page: PageSizeMM;
   readonly sections: readonly FormSection[];
   /**
-   * Whether this template has enough geometry to register against. Without it
-   * every detector falls back to a whole-page search, which is materially worse
-   * — and the UI says so rather than silently degrading.
+   * Whether this template carries geometry for its fields. There is NO
+   * whole-page fallback — this file's own header says why a detector with no
+   * prior would be a safety regression — so a field without a box is refused
+   * with `geometry_unknown` and listed in `fieldsWithoutGeometry`, and the UI
+   * says so. (An earlier version of this comment promised the fallback the
+   * header forbids.) Nothing branches on this flag today; it is carried for
+   * the builder, which will publish templates before they have geometry.
    */
   readonly hasGeometry: boolean;
 }
