@@ -614,9 +614,10 @@ function TextFieldsSection({
       </p>
     ) : !text.enabled ? (
       <p className="notice info" role="status">
-        Not read — no AI key is configured. Add <code>GROQ_API_KEY</code> (free at
-        console.groq.com/keys) or <code>ANTHROPIC_API_KEY</code> to <code>.env.local</code> and
-        restart to have these fields transcribed for review.
+        Not read — no AI key is configured. Set <code>GROQ_API_KEY</code> (free at
+        console.groq.com/keys) or <code>ANTHROPIC_API_KEY</code> in the server&rsquo;s environment
+        — locally that is <code>.env.local</code>; on a host, its environment-variable settings —
+        to have these fields transcribed for review.
       </p>
     ) : text.failure ? (
       <p className="notice warn" role="alert">
