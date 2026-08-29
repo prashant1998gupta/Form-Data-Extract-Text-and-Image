@@ -49,6 +49,7 @@ function scripted(replies: Record<string, () => string>): TextProvider {
   return {
     name: "groq",
     model: "scripted",
+    preferredMode: "perField",
     async read(request: ReadRequest): Promise<string> {
       const match = Object.entries(replies).find(([label]) => request.prompt.includes(`"${label}"`));
       if (!match) throw new Error(`no scripted reply for prompt: ${request.prompt}`);
@@ -139,6 +140,7 @@ test("an exhausted scan budget fails fields in words instead of contacting the p
     provider: {
       name: "groq",
       model: "scripted",
+      preferredMode: "perField",
       async read() {
         calls += 1;
         return '{"value": "x"}';

@@ -16,10 +16,15 @@
 
 import { anthropicProvider } from "./anthropic.ts";
 import { groqProvider } from "./groq.ts";
-import type { TextProvider } from "./provider-types.ts";
+import type { ReadMode, TextProvider } from "./provider-types.ts";
 
 export interface ResolvedReader {
   readonly provider: TextProvider | null;
+  /**
+   * How this scan's fields reach the model — the provider's preference unless
+   * FORMLINK_TEXT_MODE overrides it. Present iff `provider` is.
+   */
+  readonly mode?: ReadMode;
   /** Why there is no provider, phrased for a log line. Present iff `provider` is null. */
   readonly reason?: string;
   /**
@@ -38,11 +43,24 @@ export function resolveReader(env: Record<string, string | undefined>): Resolved
   const groqKey = env.GROQ_API_KEY?.trim();
   const anthropicKey = env.ANTHROPIC_API_KEY?.trim();
 
+  const forcedMode = env.FORMLINK_TEXT_MODE?.trim().toLowerCase();
+  let mode: ReadMode | undefined;
+  if (forcedMode === "perfield") mode = "perField";
+  else if (forcedMode === "composite") mode = "composite";
+  else if (forcedMode) {
+    return { provider: null, misconfigured: true, reason: `FORMLINK_TEXT_MODE names an unknown mode "${forcedMode}"` };
+  }
+
+  const withMode = (provider: TextProvider): ResolvedReader => ({
+    provider,
+    mode: mode ?? provider.preferredMode,
+  });
+
   if (forced === "groq") {
     if (!groqKey) {
       return { provider: null, misconfigured: true, reason: "FORMLINK_TEXT_PROVIDER is groq but GROQ_API_KEY is not set" };
     }
-    return { provider: groqProvider({ apiKey: groqKey, model }) };
+    return withMode(groqProvider({ apiKey: groqKey, model }));
   }
   if (forced === "anthropic") {
     if (!anthropicKey) {
@@ -52,14 +70,14 @@ export function resolveReader(env: Record<string, string | undefined>): Resolved
         reason: "FORMLINK_TEXT_PROVIDER is anthropic but ANTHROPIC_API_KEY is not set",
       };
     }
-    return { provider: anthropicProvider({ apiKey: anthropicKey, model }) };
+    return withMode(anthropicProvider({ apiKey: anthropicKey, model }));
   }
   if (forced) {
     return { provider: null, misconfigured: true, reason: `FORMLINK_TEXT_PROVIDER names an unknown provider "${forced}"` };
   }
 
-  if (anthropicKey) return { provider: anthropicProvider({ apiKey: anthropicKey, model }) };
-  if (groqKey) return { provider: groqProvider({ apiKey: groqKey, model }) };
+  if (anthropicKey) return withMode(anthropicProvider({ apiKey: anthropicKey, model }));
+  if (groqKey) return withMode(groqProvider({ apiKey: groqKey, model }));
 
   return { provider: null, reason: "no reader API key is configured" };
 }

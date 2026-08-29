@@ -98,6 +98,7 @@ type TextSection = {
   attempted: boolean;
   provider?: string;
   model?: string;
+  mode?: "perField" | "composite";
   skipped?: "no_text_fields" | "not_configured" | "misconfigured" | "not_a_form" | "not_registered" | "throttled";
   failure?: string;
   fields?: TextField[];
@@ -182,6 +183,11 @@ export default function ScanWorkbench() {
   // the form to apply a template drawn on that very photograph would be a
   // strange thing to ask.
   const lastFile = useRef<File | null>(null);
+  // The taught template the current result was read with, if any. It seeds
+  // the editor so "Fix these boxes" edits the taught form instead of opening
+  // empty — saving replaces the stored template by name, and an empty editor
+  // meant every field the person did not redraw silently vanished.
+  const lastTemplate = useRef<DrawnTemplate | null>(null);
   const loaded = useRef(false);
   if (!loaded.current && typeof window !== "undefined") {
     loaded.current = true;
@@ -204,6 +210,7 @@ export default function ScanWorkbench() {
       const prepared = await prepareUpload(file);
 
       lastFile.current = file;
+      lastTemplate.current = template ?? null;
 
       const body = new FormData();
       body.append("image", prepared.file);
@@ -298,6 +305,7 @@ export default function ScanWorkbench() {
         pageDataUrl={result.rectified.dataUrl}
         pageMM={result.template.page}
         initialName={result.registration.registered ? result.template.name : ""}
+        initial={lastTemplate.current}
         onCancel={() => setEditing(false)}
         onSave={saveTemplate}
       />
@@ -456,10 +464,16 @@ export default function ScanWorkbench() {
         <section className="pane" aria-label="Extracted elements">
           <header>
             <h2>Extracted elements</h2>
-            <span className="chip">
-              {found} of {regions.length} found
-              {review > 0 ? ` · ${review} to review` : ""}
-            </span>
+            {regions.length > 0 ? (
+              <span className="chip">
+                {found} of {regions.length} found
+                {review > 0 ? ` · ${review} to review` : ""}
+              </span>
+            ) : (
+              /* A text-only taught form has no image regions to count, and
+                 "0 of 0 found" reads as a failure where nothing was asked. */
+              <span className="chip">no image regions declared</span>
+            )}
           </header>
           <div className="pane-body">
             {/* Stated ONCE, above the fields, when the capture is not a form.
@@ -634,7 +648,8 @@ function TextFieldsSection({
         <h3 className="text-fields-title">Handwritten fields</h3>
         {text.attempted && text.provider ? (
           <span className="chip" title={text.model}>
-            read by {readerName} · review each one
+            read by {readerName}
+            {text.mode === "composite" ? " · one pass" : ""} · review each one
           </span>
         ) : null}
       </div>

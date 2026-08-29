@@ -39,11 +39,13 @@
  */
 
 import { A4, PAGE_SIZES, type PageSizeMM, type RectMM } from "../geometry/frames.ts";
+import { DRAWN_TEXT_TYPES, type DrawnTextType } from "./drawn.ts";
 import { isImageField, type FieldType, type FormField, type FormTemplate } from "./types.ts";
 
 /** Bounds. Generous for real forms, far below anything that threatens the function. */
 const MAX_FIELDS = 40;
 const MAX_NAME_LENGTH = 120;
+const MAX_LABEL_LENGTH = 60;
 const MIN_BOX_MM = 4;
 
 export class TemplateError extends Error {
@@ -56,12 +58,7 @@ export class TemplateError extends Error {
   }
 }
 
-/**
- * The three image types a taught template may declare. The handwriting reader
- * (`lib/reader/`) exists now, but the editor still draws only these three:
- * a text field needs a label and a type as well as a box, which is builder
- * UI this screen does not have yet.
- */
+/** The three image types a taught template may declare. Text fields arrive separately, with a label and a type. */
 const DRAWABLE: readonly FieldType[] = ["photograph", "signature", "thumbImpression"];
 
 const LABELS: Readonly<Record<string, string>> = {
@@ -93,9 +90,6 @@ export function parseCustomTemplate(raw: unknown): FormTemplate {
   if (!Array.isArray(source.fields)) {
     throw new TemplateError("The form layout has no fields.", "template_no_fields");
   }
-  if (source.fields.length === 0) {
-    throw new TemplateError("Draw at least one box before saving this form.", "template_no_fields");
-  }
   if (source.fields.length > MAX_FIELDS) {
     throw new TemplateError(`A form may declare at most ${MAX_FIELDS} regions.`, "template_too_many_fields");
   }
@@ -114,13 +108,100 @@ export function parseCustomTemplate(raw: unknown): FormTemplate {
     fields.push(field);
   }
 
+  const textFields = parseTextFields(source.textFields, page);
+  if (fields.length + textFields.length > MAX_FIELDS) {
+    throw new TemplateError(`A form may declare at most ${MAX_FIELDS} regions.`, "template_too_many_fields");
+  }
+  // A form with only text fields is legitimate — plenty of real forms have no
+  // photo, signature or thumb box. What is not legitimate is nothing at all.
+  if (fields.length + textFields.length === 0) {
+    throw new TemplateError("Draw at least one box before saving this form.", "template_no_fields");
+  }
+
   return {
     id: `custom-${hash(name)}`,
     name,
     page,
     hasGeometry: true,
-    sections: [{ id: "drawn", title: "Documents", fields }],
+    sections: [{ id: "drawn", title: "Documents", fields: [...textFields, ...fields] }],
   };
+}
+
+/**
+ * The drawn TEXT fields, validated to the same standard as the boxes.
+ *
+ * The label deserves particular suspicion: it is quoted verbatim into the
+ * prompt the handwriting reader sends (`lib/reader/prompt.ts`), so it is a
+ * browser-supplied string headed for a model. The cap and the control-char
+ * strip bound it; what remains is, at absolute worst, a label that reads like
+ * an instruction — and the reader's own contract treats even the handwriting
+ * as content, so a hostile label buys nothing a hostile pen stroke does not.
+ */
+function parseTextFields(raw: unknown, page: PageSizeMM): FormField[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) {
+    throw new TemplateError("The form layout's text fields could not be read.", "template_bad_text_fields");
+  }
+  // Bounded BEFORE any per-entry work, exactly as `source.fields` is: the
+  // label dedupe below is quadratic in the worst case, and an unauthenticated
+  // request must not get to choose how much CPU that costs.
+  if (raw.length > MAX_FIELDS) {
+    throw new TemplateError(`A form may declare at most ${MAX_FIELDS} regions.`, "template_too_many_fields");
+  }
+
+  const fields: FormField[] = [];
+  const seenLabels = new Set<string>();
+  const seenKeys = new Set<string>();
+
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) {
+      throw new TemplateError("One of the drawn text fields could not be read.", "template_bad_text_field");
+    }
+    const source = entry as Record<string, unknown>;
+
+    const label =
+      typeof source.label === "string"
+        ? // eslint-disable-next-line no-control-regex
+          source.label.replace(/[\u0000-\u001F\u007F]/g, "").replace(/\s+/g, " ").trim()
+        : "";
+    if (!label) {
+      throw new TemplateError("A drawn text field needs a label.", "template_text_field_no_label");
+    }
+    if (label.length > MAX_LABEL_LENGTH) {
+      throw new TemplateError(`A field label may be at most ${MAX_LABEL_LENGTH} characters.`, "template_label_too_long");
+    }
+    const labelKey = label.toLowerCase();
+    if (seenLabels.has(labelKey)) {
+      // Two fields with one name is an ambiguity the verify screen cannot
+      // present — the operator could not say which value belongs where.
+      throw new TemplateError(`This form declares two fields labelled "${label}".`, "template_duplicate_label");
+    }
+    seenLabels.add(labelKey);
+
+    const textType = source.textType;
+    if (typeof textType !== "string" || !(DRAWN_TEXT_TYPES as readonly string[]).includes(textType)) {
+      throw new TemplateError(`The field "${label}" has an unknown answer type.`, "template_bad_text_type");
+    }
+
+    const box = parseBox(source.box, page);
+
+    // A stable machine key from the label; the model never sees it, so it only
+    // has to be a unique identifier, not a faithful one.
+    let key = labelKey.replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "field";
+    while (seenKeys.has(key)) key = `${key}_`;
+    seenKeys.add(key);
+
+    fields.push({
+      id: `drawn-text-${key}`,
+      key,
+      label,
+      type: textType as DrawnTextType,
+      box,
+      origin: "drawn",
+    });
+  }
+
+  return fields;
 }
 
 function parsePage(raw: unknown): PageSizeMM {

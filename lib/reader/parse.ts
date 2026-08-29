@@ -47,8 +47,39 @@ export function parseReading(raw: string, field: FormField): ParsedReading {
     return { value: null, blank: false, problem: "the reader's reply did not carry a value" };
   }
 
-  const rawValue: unknown = parsed.value;
+  return readingFromValue(parsed.value, field);
+}
 
+/**
+ * Parses a one-pass (composite) reply against the fields it answered for,
+ * returning one reading per field IN FIELD ORDER.
+ *
+ * The mapping is by STRIP NUMBER, never by position in the reply: a reply
+ * that answers {"2": ..., "1": ...} is fine, and one that skips "3" fails
+ * field 3 alone in words — it must not shift every later value up a field,
+ * which is the misattribution this whole design refuses.
+ */
+export function parseCompositeReadings(raw: string, fields: readonly FormField[]): ParsedReading[] {
+  const parsed = parseJsonObject(raw);
+  if (parsed === null) {
+    return fields.map(() => ({
+      value: null,
+      blank: false,
+      problem: "the reader's reply was not in the agreed format",
+    }));
+  }
+
+  return fields.map((field, index) => {
+    const key = String(index + 1);
+    if (!(key in parsed)) {
+      return { value: null, blank: false, problem: "the reader's reply skipped this field" };
+    }
+    return readingFromValue(parsed[key], field);
+  });
+}
+
+/** The shared value contract: string, number, boolean or null — nothing else. */
+function readingFromValue(rawValue: unknown, field: FormField): ParsedReading {
   if (rawValue === null) {
     // The model examined the crop and declined to guess. A successful call.
     return { value: null, blank: false };

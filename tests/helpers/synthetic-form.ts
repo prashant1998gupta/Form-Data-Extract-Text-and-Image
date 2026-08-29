@@ -23,6 +23,7 @@
  */
 
 import { rgbFrom, type Rect, type Rgb } from "../../lib/vision/types.ts";
+import { strokeText } from "./stroke-font.ts";
 
 /** xorshift32. Deterministic, fast, and good enough to look like paper. */
 export function makeRandom(seed: number) {
@@ -69,10 +70,29 @@ export interface SyntheticForm {
     readonly photo: Rect | null;
     readonly signature: Rect | null;
     readonly thumb: Rect | null;
-    /** Boxes of the handwritten field values, in reading order. */
-    readonly fields: readonly { readonly label: string; readonly box: Rect }[];
+    /** The handwritten field values, in reading order: what was written, and where its ink landed. */
+    readonly fields: readonly { readonly label: string; readonly value: string; readonly box: Rect }[];
   };
 }
+
+/**
+ * What the synthetic patient wrote, field by field.
+ *
+ * These are GROUND TRUTH for the handwriting reader: fixed rather than
+ * randomised so a reader test (or a person running the demo with a key) can
+ * check a transcription against a known answer. The blood group is deliberately
+ * `B+` — one stroke from `B-`, the exact pair the review rules exist for.
+ */
+export const FIELD_VALUES: Readonly<Record<string, string>> = {
+  "Patient Name": "ANITA SHARMA",
+  Age: "34",
+  "Blood Group": "B+",
+  "Mobile Number": "98765 43210",
+  "Email ID": "ANITA@MAIL.COM",
+  Date: "12/08/2026",
+  "Disease / Complaint": "FEVER",
+  "Doctor Assigned": "DR MEHTA",
+};
 
 interface Canvas {
   data: Uint8ClampedArray;
@@ -171,36 +191,61 @@ export function renderSyntheticForm(options: SyntheticFormOptions = {}): Synthet
     "Disease / Complaint",
     "Doctor Assigned",
   ];
-  const fields: { label: string; box: Rect }[] = [];
+  const fields: { label: string; value: string; box: Rect }[] = [];
   // Always short of the photo box, because the printed box is always drawn —
   // `withPhoto` controls whether a photograph is PASTED into it, not whether
   // the form has one. An unfilled form still has the rectangle printed on it,
   // and its field rows still stop before it.
   const fieldRight = photoBox.x - 24;
-  const rowHeight = Math.round(page.height * 0.038);
 
-  for (const label of fieldLabels) {
+  // THE ROWS ARE ANCHORED TO THE SEED TEMPLATE'S MILLIMETRES, not flowed from
+  // the header. The template declares each answer box at 47 + 11k mm, 8 mm
+  // tall, values from 55 mm — and for a long time this generator flowed its
+  // rows one row higher, which nothing noticed while the handwriting was
+  // unreadable scrawl: the "Patient Name" crop faithfully contained the AGE
+  // row's ink, and no detector cared. A reader does. The fixture and the
+  // template now agree by construction, and a regression test measures it.
+  const mmX = page.width / 210;
+  const mmY = page.height / 297;
+  const ROW0_MM = 47;
+  const ROW_PITCH_MM = 11;
+  const BOX_HEIGHT_MM = 8;
+
+  for (let index = 0; index < fieldLabels.length; index += 1) {
+    const label = fieldLabels[index];
+    const boxTop = page.y + (ROW0_MM + ROW_PITCH_MM * index) * mmY;
+    const boxBottom = boxTop + BOX_HEIGHT_MM * mmY;
     // Once past the photo box, rows may use the full width.
-    const rowEnd = y > photoBox.y + photoBox.height + 10 ? right : fieldRight;
-    const labelWidth = Math.round((rowEnd - left) * 0.24);
-    // The label sits on the same baseline as the value it introduces, as it
-    // does on a real form. Putting it a row above would make the layout easier
-    // to segment than reality, which would flatter the detectors.
-    printedText(canvas, left, y + rowHeight - 22, labelWidth, 11, [70, 72, 80], random);
+    const rowEnd = boxTop > photoBox.y + photoBox.height + 6 ? right : fieldRight;
 
-    const valueStart = left + labelWidth + 14;
-    // The printed rule the value is written on.
-    fill(canvas, valueStart, y + rowHeight - 6, rowEnd - valueStart, 2, [168, 170, 176]);
+    // The label sits on the same baseline as the value it introduces, as it
+    // does on a real form, and ends before the 55 mm line the values start at.
+    const labelWidth = Math.round(page.x + 52 * mmX - left);
+    printedText(canvas, left, Math.round(boxBottom - 20), labelWidth, 11, [70, 72, 80], random);
+
+    const valueStart = Math.round(page.x + 55 * mmX);
+    // The printed rule the value is written on, near the answer box's foot.
+    fill(canvas, valueStart, Math.round(boxBottom - 2 * mmY), rowEnd - valueStart, 2, [168, 170, 176]);
 
     // Handwriting: sits ON the rule, overhangs it, and wanders vertically —
-    // all three are what make real forms hard.
-    const valueWidth = Math.round((rowEnd - valueStart) * (0.45 + random() * 0.4));
-    const box = handwriting(canvas, valueStart + 6, y + rowHeight - 26, valueWidth, 24, random, photocopy);
-    fields.push({ label, box });
-    y += rowHeight;
+    // all three are what make real forms hard. It is LEGIBLE now (see
+    // stroke-font.ts for why the statistical scrawl had to go), and what it
+    // says is returned as ground truth beside where it landed.
+    const value = FIELD_VALUES[label] ?? "";
+    const box = handwrittenValue(
+      canvas,
+      value,
+      Math.round(page.x + 56 * mmX),
+      Math.round(boxTop + 0.5 * mmY),
+      rowEnd - valueStart - Math.round(2 * mmX),
+      Math.round(6 * mmY),
+      random,
+      photocopy,
+    );
+    fields.push({ label, value, box });
   }
 
-  y += 24;
+  y = Math.round(page.y + (ROW0_MM + ROW_PITCH_MM * (fieldLabels.length - 1) + BOX_HEIGHT_MM) * mmY) + 24;
 
   // ---- signature and thumb impression, side by side at the foot ----
   const footY = Math.max(y, page.y + Math.round(page.height * 0.78));
@@ -245,7 +290,7 @@ export function renderSyntheticForm(options: SyntheticFormOptions = {}): Synthet
       photo: photoTruth ? rotateRect(photoTruth, skew, width, height) : null,
       signature: signatureTruth ? rotateRect(signatureTruth, skew, width, height) : null,
       thumb: thumbTruth ? rotateRect(thumbTruth, skew, width, height) : null,
-      fields: fields.map((f) => ({ label: f.label, box: rotateRect(f.box, skew, width, height) })),
+      fields: fields.map((f) => ({ label: f.label, value: f.value, box: rotateRect(f.box, skew, width, height) })),
     };
   }
 
@@ -317,56 +362,41 @@ function printedText(canvas: Canvas, x: number, y: number, width: number, size: 
 }
 
 /**
- * Handwriting: a continuous wandering stroke with varying pressure and width.
+ * A handwritten field value: legible single-stroke print in blue ballpoint.
  *
- * The properties that matter and are modelled: stroke width varies (so the
- * stroke-width-variation statistic separates it from print), the baseline
- * drifts, and it overhangs the rule it is written on.
+ * The properties the detectors key on survive from the scrawl this replaced —
+ * stroke width varies, the baseline drifts letter by letter, and the ink sits
+ * on (and overhangs) the printed rule. What changed is that it now says
+ * something, so the handwriting reader has ground truth to be measured
+ * against instead of fixtures that manufacture their own illegibility.
  */
-function handwriting(
+function handwrittenValue(
   canvas: Canvas,
+  text: string,
   x: number,
   y: number,
-  width: number,
+  maxWidth: number,
   height: number,
   random: () => number,
   faint: boolean,
 ): Rect {
   const colour: RGB = faint ? [96, 100, 118] : [38, 44, 96]; // blue ballpoint
-  let px = x;
-  let py = y + height * 0.6;
-  let minX = px;
-  let maxX = px;
-  let minY = py;
-  let maxY = py;
-
-  const steps = Math.round(width * 1.6);
-  let phase = random() * Math.PI * 2;
-  for (let i = 0; i < steps; i += 1) {
-    phase += 0.22 + random() * 0.12;
-    px += width / steps;
-    py = y + height * 0.55 + Math.sin(phase) * height * 0.3 + (random() - 0.5) * 2;
-    // Pressure: 1 to 3 px, which is the variation print does not have.
-    const thickness = 1 + Math.round(Math.abs(Math.sin(phase * 0.7)) * 2);
-    for (let dy = 0; dy < thickness; dy += 1) {
-      for (let dx = 0; dx < thickness; dx += 1) {
-        setPixel(canvas, Math.round(px) + dx, Math.round(py) + dy, colour, faint ? 0.72 : 1);
+  return strokeText({
+    text,
+    x,
+    y,
+    height,
+    maxWidth,
+    random,
+    faint,
+    mark: (px, py, thickness, alpha) => {
+      for (let dy = 0; dy < thickness; dy += 1) {
+        for (let dx = 0; dx < thickness; dx += 1) {
+          setPixel(canvas, Math.round(px) + dx, Math.round(py) + dy, colour, alpha);
+        }
       }
-    }
-    minX = Math.min(minX, px);
-    maxX = Math.max(maxX, px + thickness);
-    minY = Math.min(minY, py);
-    maxY = Math.max(maxY, py + thickness);
-    // Pen lifts between letters.
-    if (random() > 0.94) px += 3 + random() * 5;
-  }
-
-  return {
-    x: Math.round(minX),
-    y: Math.round(minY),
-    width: Math.round(maxX - minX),
-    height: Math.round(maxY - minY),
-  };
+    },
+  });
 }
 
 /**

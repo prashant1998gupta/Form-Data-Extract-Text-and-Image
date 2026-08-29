@@ -205,6 +205,8 @@ interface TextPayload {
   readonly attempted: boolean;
   readonly provider?: string;
   readonly model?: string;
+  /** How the fields reached the model: one request each, or one composite request per scan. */
+  readonly mode?: "perField" | "composite";
   readonly skipped?:
     | "no_text_fields"
     | "not_configured"
@@ -261,7 +263,7 @@ async function readHandwriting(
     if (reader.misconfigured) console.warn(`handwriting reader disabled: ${reader.reason}`);
     return { enabled: false, attempted: false, skipped: reader.misconfigured ? "misconfigured" : "not_configured" };
   }
-  const meta = { enabled: true, provider: reader.provider.name, model: reader.provider.model };
+  const meta = { enabled: true, provider: reader.provider.name, model: reader.provider.model, mode: reader.mode };
 
   // The endpoint is unauthenticated, so every admitted scan is somebody's
   // metered spend. The bound is per instance and says so where it is defined —
@@ -273,7 +275,7 @@ async function readHandwriting(
   const started = performance.now();
   let readings: FieldReading[];
   try {
-    readings = await readTextFields({ rectified, template, provider: reader.provider });
+    readings = await readTextFields({ rectified, template, provider: reader.provider, mode: reader.mode });
   } catch (error) {
     // The orchestrator isolates per-field faults, so reaching here means the
     // scan-level machinery failed. The crops above are unaffected; say so.

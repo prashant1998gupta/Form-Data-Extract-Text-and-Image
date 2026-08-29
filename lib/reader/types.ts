@@ -11,9 +11,11 @@
  *
  * Which field is being read, and which pixels it is read from, are decided by
  * the template and the registration — deterministically, before any model is
- * addressed. Each field is sent as its own crop in its own request, so a value
- * cannot land under the wrong label by the model miscounting regions: the
- * mapping from answer to field is structural, not the model's opinion.
+ * addressed. In per-field mode each field is its own request and the mapping
+ * from answer to field is structural — not the model's opinion. In composite
+ * mode (token-capped tiers) the mapping rides on strip numbers this pipeline
+ * prints into the image, mitigated rather than structural — the model still
+ * never chooses coordinates, and a strip it skips fails alone.
  *
  * The verify screen then shows the operator EXACTLY the crop the model saw,
  * beside the value it produced. That is the whole trust story: the human

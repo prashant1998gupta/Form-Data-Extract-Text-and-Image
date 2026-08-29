@@ -287,20 +287,27 @@ Detailed separately because it is the product.
 > **Status.** SUBSTITUTED, partially — an interim single-pass reader ships as
 > [`lib/reader/`](../lib/reader/) (README § Reading the handwritten text). What it does:
 > one request per declared text field, from a crop cut deterministically at the field's
-> template box on the rectified page; providers Groq (default `qwen/qwen3.6-27b`) or
-> Anthropic (`claude-opus-5`), chosen by `GROQ_API_KEY`/`ANTHROPIC_API_KEY` — with no key
-> the reader is off and nothing calls a model. Every value is review-required with its
-> evidence crop shown; blank (`""`) and unreadable (`null`) are distinct answers; no
-> reading happens unless form presence AND template registration pass; replies are parsed
-> as untrusted input; a 40 s scan budget, per-request timeouts and a per-instance scan
-> throttle bound cost. The Groq default coexists with §4.3's verdict deliberately: for a
-> zero-cost single-tenant demo its caveats are acceptable and the model is overridable
-> (`FORMLINK_TEXT_MODEL`); the production stance below stands. NOT BUILT: everything
-> else this section specifies — `lib/text/`, the three-reader fusion (Gemini primary,
-> Claude decorrelated, Azure lexical), 2-of-3 agreement, per-type validation and
-> normalisation, the INK-based hallucination and blank gates, per-character doubt
-> underlining, and every confidence number for text (the shipped reader displays none,
-> by design).
+> template box on the rectified page — or, on token-per-minute-capped tiers where eight
+> requests can never fit (Groq prices every image a flat ~2k tokens), ONE composite
+> request per scan: every crop stacked into one image with strip numbers printed into
+> the pixels, replies keyed by strip number so a skipped strip fails alone
+> (`lib/reader/composite.ts`; `FORMLINK_TEXT_MODE` overrides the per-provider default).
+> Providers Groq (default `qwen/qwen3.6-27b`) or Anthropic (`claude-opus-5`), chosen by
+> `GROQ_API_KEY`/`ANTHROPIC_API_KEY` — with no key the reader is off and nothing calls a
+> model. Taught templates may declare text fields too: the editor draws a labelled,
+> typed box and `custom.ts` parses it at the same trust boundary as the image boxes.
+> Every value is review-required with its evidence crop shown; blank (`""`) and
+> unreadable (`null`) are distinct answers; no reading happens unless form presence AND
+> template registration pass; replies are parsed as untrusted input; a 40 s scan budget,
+> per-request timeouts and a per-instance scan throttle bound cost. The Groq default
+> coexists with §4.3's verdict deliberately: for a zero-cost single-tenant demo its
+> caveats are acceptable, composite mode is exactly the low-stakes fast path §4.3
+> reserves for it, and the model is overridable (`FORMLINK_TEXT_MODEL`); the production
+> stance below stands. NOT BUILT: everything else this section specifies — `lib/text/`,
+> the three-reader fusion (Gemini primary, Claude decorrelated, Azure lexical), 2-of-3
+> agreement, per-type validation and normalisation, the INK-based hallucination and
+> blank gates, per-character doubt underlining, and every confidence number for text
+> (the shipped reader displays none, by design).
 
 ---
 
@@ -1141,7 +1148,7 @@ Served **only** via short-TTL signed URLs (default 300 s). Storage RLS mirrors t
 
 ## 8. Module / file layout
 
-> **Status.** This tree is the INTENDED end state and most of it does not exist. What does: `lib/vision/` (16 files), `lib/ink/` (`normalize.ts`, `paper-stats.ts`, `text-lines.ts`), `lib/regions/` (`photo.ts`, `signature.ts`, `thumb.ts`, `postprocess.ts`, `params.ts`, plus two this tree never anticipated — `form-presence.ts` and `template-anchors.ts`), `lib/geometry/frames.ts`, `lib/pipeline/extract-regions.ts`, `lib/templates/` (`types.ts`, `seed.ts`, and the taught-template pair `custom.ts` + `drawn.ts`), `lib/client/prepare-upload.ts`, `lib/reader/` (a module this tree never anticipated — the interim single-pass handwriting reader of Stage 9's status note: types, prompt, parse, crop, provider, provider-types, groq, anthropic, read-text-fields, throttle), and in `app/`: `page.tsx`, `ScanWorkbench.tsx`, `TemplateEditor.tsx`, `api/extract/route.ts`. Everything else below — `lib/cv/`, `lib/registration/`, `lib/text/` (the full fusion engine; `lib/reader/` is its substituted interim), `lib/models/`, `lib/confidence/`, `lib/db|storage|auth|realtime/`, every admin and record route — is NOT BUILT. Note `lib/regions/edge-fit.ts` is SUBSTITUTED by `lib/vision/lines.ts`.
+> **Status.** This tree is the INTENDED end state and most of it does not exist. What does: `lib/vision/` (16 files), `lib/ink/` (`normalize.ts`, `paper-stats.ts`, `text-lines.ts`), `lib/regions/` (`photo.ts`, `signature.ts`, `thumb.ts`, `postprocess.ts`, `params.ts`, plus two this tree never anticipated — `form-presence.ts` and `template-anchors.ts`), `lib/geometry/frames.ts`, `lib/pipeline/extract-regions.ts`, `lib/templates/` (`types.ts`, `seed.ts`, and the taught-template pair `custom.ts` + `drawn.ts`), `lib/client/prepare-upload.ts`, `lib/reader/` (a module this tree never anticipated — the interim single-pass handwriting reader of Stage 9's status note: types, prompt, parse, crop, composite, provider, provider-types, groq, anthropic, read-text-fields, throttle), and in `app/`: `page.tsx`, `ScanWorkbench.tsx`, `TemplateEditor.tsx`, `api/extract/route.ts`. Everything else below — `lib/cv/`, `lib/registration/`, `lib/text/` (the full fusion engine; `lib/reader/` is its substituted interim), `lib/models/`, `lib/confidence/`, `lib/db|storage|auth|realtime/`, every admin and record route — is NOT BUILT. Note `lib/regions/edge-fit.ts` is SUBSTITUTED by `lib/vision/lines.ts`.
 
 ```
 app/
@@ -1386,7 +1393,7 @@ golden:       nightly provider regression on 200 labelled field crops;
 
 ## 11. Build order
 
-> **Status.** Phases 0-2 are NOT complete as written — there is no Supabase project, no job runner, no OpenCV.js, no anchor atlas or homography refit. Phase 1's synthetic generator IS built ([`tests/helpers/synthetic-form.ts`](../tests/helpers/synthetic-form.ts)), though as a single module rather than `scripts/synth/*`. **Phase 3 is substantially complete and is what the product currently is** — photo, signature and thumb detection, the params, the three absence reasons, 216 tests. Phase 4 (text extraction) has its interim substitute: the single-pass reader of Stage 9's status note reads every declared text field behind an optional API key, always for review — the fusion, validation and confidence machinery this phase actually specifies is NOT started. Phase 5's verify screen IS built with editable text values (edits live only on the screen — nothing persists), and its correction-capture half ships as the taught-template editor rather than as drag-to-correct plus a learning loop.
+> **Status.** Phases 0-2 are NOT complete as written — there is no Supabase project, no job runner, no OpenCV.js, no anchor atlas or homography refit. Phase 1's synthetic generator IS built ([`tests/helpers/synthetic-form.ts`](../tests/helpers/synthetic-form.ts)), though as a single module rather than `scripts/synth/*`. **Phase 3 is substantially complete and is what the product currently is** — photo, signature and thumb detection, the params, the three absence reasons, 236 tests. Phase 4 (text extraction) has its interim substitute: the single-pass reader of Stage 9's status note reads every declared text field behind an optional API key, always for review — the fusion, validation and confidence machinery this phase actually specifies is NOT started. Phase 5's verify screen IS built with editable text values (edits live only on the screen — nothing persists), and its correction-capture half ships as the taught-template editor rather than as drag-to-correct plus a learning loop.
 
 Each phase produces something demonstrable to a non-engineer. No phase is longer than roughly three weeks. Nothing depends on a corpus that does not yet exist.
 

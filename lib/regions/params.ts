@@ -13,8 +13,9 @@
  *    Qwen use three mutually incompatible conventions. None of them belongs on
  *    the path that decides where to cut a photograph. The handwriting reader
  *    (`lib/reader/`) obeys the same boundary from the other side: it supplies
- *    transcribed VALUES for review, one field per request, and the crop it
- *    reads was cut by this pipeline's geometry — a model never chooses which
+ *    transcribed VALUES for review — one field per request, or keyed to strip
+ *    numbers this pipeline printed into a composite image — and the crop it
+ *    reads was cut by this pipeline's geometry: a model never chooses which
  *    pixels a value came from, nor which field a value lands under.
  *
  * 2. **A wrong crop is worse than no crop.** HARD BANDS reject outright and

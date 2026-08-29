@@ -234,11 +234,13 @@ memory. `~` means partly done, and says which part.
       [`app/TemplateEditor.tsx`](../app/TemplateEditor.tsx)) and persists in
       localStorage. No sections, no typed text fields, no publishable link.
 - [ ] All 17 field types from §3.4 exist and render in the builder and the verify screen.
-      `~` The three image types are drawable and extractable; every text type a
-      template declares with geometry is READ by the optional handwriting reader
+      `~` The three image types plus nine text types (short/long text, name,
+      phone, email, number, date, age, address) are drawable in the taught-form
+      editor with a label; every text field a template declares with geometry
+      is READ by the optional handwriting reader
       ([`lib/reader/`](../lib/reader/), behind an API key) and rendered for
-      review. There is still no builder, so only the seeded template declares
-      text fields today.
+      review. Missing: dropdown/checkbox/radio (their options need builder UI),
+      document, custom — and there is still no builder, sections, or publish.
 - [x] **Staff capture via camera or file upload, on desktop and mobile.**
       `capture="environment"` plus a file input; verified on a 375 px viewport.
       Captures are resized in the browser first
@@ -257,10 +259,13 @@ memory. `~` means partly done, and says which part.
       This is the one Must item where the shipped code regressed against the
       requirement, so it is flagged rather than left as a silent empty box.
 - [ ] Extraction is constrained to the admin-defined field schema.
-      `~` True for images AND text: only declared boxes are extracted, each text
-      field is read in its own request against a key the server chose, and a
-      model can neither add a field nor re-address one. Unticked only because
-      the schema itself cannot yet be admin-defined beyond three drawn boxes.
+      `~` True for images AND text: only declared boxes are extracted, and
+      values are read against a key the server chose. A model can never ADD a
+      field; in per-field mode it cannot re-address one either (the mapping is
+      structural), while in composite mode re-addressing is mitigated — strip
+      numbers we print into the image, review-always — rather than impossible.
+      Unticked only because the schema is taught by drawing rather than
+      admin-defined in a builder.
 - [x] **Photograph, signature and thumb impression are detected and cropped as separate images.**
       The engine, and the differentiator. See [Measured accuracy](../README.md#measured-accuracy).
 - [x] **Absent elements report Not Detected. Nothing is ever fabricated.**
@@ -317,4 +322,4 @@ already exists somewhere, this says where.
 | `05-text-extraction.md` | Field reading, validation, normalization | Not written. An interim single-pass reader IS built — [`lib/reader/`](../lib/reader/), documented in the [README](../README.md#reading-the-handwritten-text); the multi-reader fusion, validation and normalization remain specified-only in [02-architecture.md](02-architecture.md) §4. |
 | `06-confidence.md` | How every percentage on screen is computed | Not written. Specified in [02-architecture.md](02-architecture.md) §5. The calibrator is not built; the numbers currently shown are raw detector scores. |
 | `07-templates.md` | Template learning, registration, feedback loop | Not written. Specified in [02-architecture.md](02-architecture.md) §6. Partly built: forms can be taught by drawing ([`lib/templates/custom.ts`](../lib/templates/custom.ts)) and landmarks verified ([`lib/regions/template-anchors.ts`](../lib/regions/template-anchors.ts)). |
-| `08-testing.md` | Fixtures, synthetic forms, what is asserted | Not written. Specified in [02-architecture.md](02-architecture.md) §10. Built: 216 tests and the generator in [`tests/helpers/synthetic-form.ts`](../tests/helpers/synthetic-form.ts). |
+| `08-testing.md` | Fixtures, synthetic forms, what is asserted | Not written. Specified in [02-architecture.md](02-architecture.md) §10. Built: 236 tests and the generator in [`tests/helpers/synthetic-form.ts`](../tests/helpers/synthetic-form.ts). |

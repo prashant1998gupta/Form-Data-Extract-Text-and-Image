@@ -2,7 +2,7 @@
 
 import { useCallback, useRef, useState } from "react";
 
-import type { DrawnBox, DrawnElement, DrawnTemplate } from "@/lib/templates/drawn";
+import { DRAWN_TEXT_TYPES, type DrawnBox, type DrawnElement, type DrawnTemplate, type DrawnTextField, type DrawnTextType } from "@/lib/templates/drawn";
 
 /**
  * Teaching the app a form, by drawing on it.
@@ -48,7 +48,23 @@ const ELEMENTS = [
   { type: "thumbImpression", label: "Thumb", hint: "the inked thumb box" },
 ] as const;
 
-type ElementType = DrawnElement;
+/** What each drawable answer shape is called on screen. Order is the select's order. */
+const TEXT_TYPE_LABELS: Readonly<Record<DrawnTextType, string>> = {
+  shortText: "Short text",
+  name: "Name",
+  phone: "Phone number",
+  email: "Email",
+  number: "Number",
+  date: "Date",
+  age: "Age",
+  address: "Address",
+  longText: "Long text",
+};
+
+type ElementType = DrawnElement | "text";
+
+/** The server's MAX_FIELDS, mirrored so the person learns of the bound at box 40, not at save time. */
+const MAX_REGIONS = 40;
 
 interface Props {
   /** The rectified page, as shown on the verify screen. */
@@ -56,15 +72,33 @@ interface Props {
   /** Physical size of the page the boxes are measured against. */
   readonly pageMM: { readonly widthMM: number; readonly heightMM: number };
   readonly initialName?: string;
+  /**
+   * The taught template this capture was read with, when there is one. It
+   * seeds the editor, because "Fix these boxes" that opened EMPTY was a trap:
+   * saving replaces the stored template by name, so every taught field the
+   * person did not redraw silently vanished — tolerable at three image boxes,
+   * ruinous at thirty labelled text fields.
+   */
+  readonly initial?: DrawnTemplate | null;
   readonly onCancel: () => void;
   readonly onSave: (template: DrawnTemplate) => void;
 }
 
-export default function TemplateEditor({ pageDataUrl, pageMM, initialName, onCancel, onSave }: Props) {
-  const [name, setName] = useState(initialName ?? "");
+export default function TemplateEditor({ pageDataUrl, pageMM, initialName, initial, onCancel, onSave }: Props) {
+  const [name, setName] = useState(initial?.name ?? initialName ?? "");
   const [active, setActive] = useState<ElementType>("photograph");
-  const [boxes, setBoxes] = useState<Record<string, DrawnBox>>({});
+  const [boxes, setBoxes] = useState<Record<string, DrawnBox>>(() => {
+    const seeded: Record<string, DrawnBox> = {};
+    for (const field of initial?.fields ?? []) seeded[field.type] = field;
+    return seeded;
+  });
   const [drag, setDrag] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  // Text fields taught by drawing. A drawn text box is not committed until it
+  // has a label — an unlabelled answer area is a value with nowhere to land.
+  const [textFields, setTextFields] = useState<DrawnTextField[]>(() => [...(initial?.textFields ?? [])]);
+  const [pendingBox, setPendingBox] = useState<DrawnTextField["box"] | null>(null);
+  const [pendingLabel, setPendingLabel] = useState("");
+  const [pendingType, setPendingType] = useState<DrawnTextType>("shortText");
 
   const surface = useRef<HTMLDivElement | null>(null);
 
@@ -111,6 +145,13 @@ export default function TemplateEditor({ pageDataUrl, pageMM, initialName, onCan
     // and turning that into a 2 mm region produces a baffling refusal later.
     if (widthMM < 5 || heightMM < 5) return;
 
+    if (active === "text") {
+      // The box waits for its label. Drawing again replaces it — redrawing is
+      // cheaper than a resize handle, on a phone especially.
+      setPendingBox({ xMM, yMM, widthMM, heightMM });
+      return;
+    }
+
     setBoxes((current) => ({ ...current, [active]: { type: active, box: { xMM, yMM, widthMM, heightMM } } }));
 
     // Advance to the next element that has no box yet, so the common path is
@@ -119,8 +160,27 @@ export default function TemplateEditor({ pageDataUrl, pageMM, initialName, onCan
     if (next) setActive(next.type);
   }, [drag, pageMM, active, boxes]);
 
+  const addTextField = useCallback(() => {
+    const label = pendingLabel.replace(/\s+/g, " ").trim();
+    if (!pendingBox || !label) return;
+    // The same one-name-one-field rule the server enforces, caught where the
+    // person can still fix it instead of at save time.
+    if (textFields.some((field) => field.label.toLowerCase() === label.toLowerCase())) return;
+    setTextFields((current) => [...current, { label, textType: pendingType, box: pendingBox }]);
+    setPendingBox(null);
+    setPendingLabel("");
+  }, [pendingBox, pendingLabel, pendingType, textFields]);
+
+  const duplicateLabel =
+    pendingLabel.trim().length > 0 &&
+    textFields.some((field) => field.label.toLowerCase() === pendingLabel.replace(/\s+/g, " ").trim().toLowerCase());
+
   const drawn = Object.values(boxes);
-  const canSave = drawn.length > 0 && name.trim().length > 0;
+  const atRegionLimit = drawn.length + textFields.length >= MAX_REGIONS;
+  // A pending text box blocks Save rather than being silently dropped: the
+  // person typed a label for it, and losing it on Save would be losing work
+  // that was one click from committed.
+  const canSave = (drawn.length > 0 || textFields.length > 0) && name.trim().length > 0 && !pendingBox;
 
   return (
     <div className="pane" style={{ padding: 18 }}>
@@ -170,12 +230,106 @@ export default function TemplateEditor({ pageDataUrl, pageMM, initialName, onCan
             {element.label}
           </button>
         ))}
+        <button
+          type="button"
+          className={`button${active === "text" ? "" : " secondary"}`}
+          onClick={() => setActive("text")}
+          aria-pressed={active === "text"}
+        >
+          {textFields.length > 0 ? `✓ ${textFields.length} ` : "+ "}Text field
+        </button>
       </div>
 
       <p style={{ margin: "0 0 10px", fontSize: 13, color: "var(--muted)" }}>
-        Now drag a box closely around <strong>{ELEMENTS.find((e) => e.type === active)?.hint}</strong>.
-        Not on the form? Skip it — only the boxes you draw are extracted.
+        {active === "text" ? (
+          <>
+            Drag a box around <strong>one handwritten answer area</strong> — the space where the
+            value is written, not its printed label — then name it. Add as many as the form has.
+            They are read by the AI reader when a key is configured.
+          </>
+        ) : (
+          <>
+            Now drag a box closely around <strong>{ELEMENTS.find((e) => e.type === active)?.hint}</strong>.
+            Not on the form? Skip it — only the boxes you draw are extracted.
+          </>
+        )}
       </p>
+
+      {pendingBox ? (
+        <div
+          className="actions"
+          style={{ justifyContent: "flex-start", marginBottom: 10, flexWrap: "wrap", gap: 8, alignItems: "center" }}
+        >
+          <input
+            type="text"
+            value={pendingLabel}
+            onChange={(event) => setPendingLabel(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") addTextField();
+            }}
+            placeholder='Label as printed, e.g. "Mobile Number"'
+            maxLength={60}
+            // eslint-disable-next-line jsx-a11y/no-autofocus
+            autoFocus
+            style={{
+              padding: "8px 10px",
+              font: "inherit",
+              border: "1px solid var(--line, #d8d4cc)",
+              borderRadius: 8,
+              background: "var(--card, #fff)",
+              color: "inherit",
+              minWidth: 220,
+            }}
+            aria-label="Field label"
+          />
+          <select
+            value={pendingType}
+            onChange={(event) => setPendingType(event.target.value as DrawnTextType)}
+            aria-label="Answer type"
+            style={{
+              padding: "8px 10px",
+              font: "inherit",
+              border: "1px solid var(--line, #d8d4cc)",
+              borderRadius: 8,
+              background: "var(--card, #fff)",
+              color: "inherit",
+            }}
+          >
+            {DRAWN_TEXT_TYPES.map((type) => (
+              <option key={type} value={type}>
+                {TEXT_TYPE_LABELS[type]}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="button"
+            onClick={addTextField}
+            disabled={!pendingLabel.trim() || duplicateLabel || atRegionLimit}
+          >
+            Add field
+          </button>
+          <button
+            type="button"
+            className="button secondary"
+            onClick={() => {
+              setPendingBox(null);
+              setPendingLabel("");
+            }}
+          >
+            Discard box
+          </button>
+          {duplicateLabel ? (
+            <span style={{ fontSize: 13, color: "var(--muted)" }}>
+              A field with this label already exists.
+            </span>
+          ) : atRegionLimit ? (
+            <span style={{ fontSize: 13, color: "var(--muted)" }}>
+              A form may declare at most {MAX_REGIONS} regions.
+            </span>
+          ) : null}
+        </div>
+      ) : null}
 
       <div
         ref={surface}
@@ -236,6 +390,76 @@ export default function TemplateEditor({ pageDataUrl, pageMM, initialName, onCan
           </span>
         ))}
 
+        {textFields.map((field) => (
+          <span
+            key={field.label}
+            style={{
+              position: "absolute",
+              left: `${(field.box.xMM / pageMM.widthMM) * 100}%`,
+              top: `${(field.box.yMM / pageMM.heightMM) * 100}%`,
+              width: `${(field.box.widthMM / pageMM.widthMM) * 100}%`,
+              height: `${(field.box.heightMM / pageMM.heightMM) * 100}%`,
+              border: "2px dashed #1d4ed8",
+              background: "rgba(29,78,216,0.08)",
+              pointerEvents: "none",
+            }}
+          >
+            <span
+              style={{
+                position: "absolute",
+                top: -2,
+                left: -2,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                background: "#1d4ed8",
+                color: "#fff",
+                fontSize: 11,
+                padding: "1px 5px",
+                borderRadius: "4px 0 4px 0",
+                whiteSpace: "nowrap",
+                // The one interactive part of an otherwise inert overlay: the
+                // remove button must be clickable through the drawing surface.
+                pointerEvents: "auto",
+              }}
+            >
+              {field.label}
+              <button
+                type="button"
+                aria-label={`Remove the ${field.label} field`}
+                onClick={() => setTextFields((current) => current.filter((f) => f.label !== field.label))}
+                onPointerDown={(event) => event.stopPropagation()}
+                style={{
+                  border: "none",
+                  background: "transparent",
+                  color: "#fff",
+                  cursor: "pointer",
+                  font: "inherit",
+                  padding: 0,
+                  lineHeight: 1,
+                }}
+              >
+                ×
+              </button>
+            </span>
+          </span>
+        ))}
+
+        {pendingBox ? (
+          <span
+            style={{
+              position: "absolute",
+              left: `${(pendingBox.xMM / pageMM.widthMM) * 100}%`,
+              top: `${(pendingBox.yMM / pageMM.heightMM) * 100}%`,
+              width: `${(pendingBox.widthMM / pageMM.widthMM) * 100}%`,
+              height: `${(pendingBox.heightMM / pageMM.heightMM) * 100}%`,
+              border: "2px dashed #1d4ed8",
+              background: "rgba(29,78,216,0.14)",
+              pointerEvents: "none",
+            }}
+          />
+        ) : null}
+
         {drag ? (
           <span
             style={{
@@ -262,13 +486,23 @@ export default function TemplateEditor({ pageDataUrl, pageMM, initialName, onCan
               name: name.trim(),
               page: "A4",
               fields: drawn,
+              textFields,
             })
           }
         >
           Save and read this form
         </button>
-        {drawn.length > 0 ? (
-          <button className="button secondary" type="button" onClick={() => setBoxes({})}>
+        {drawn.length > 0 || textFields.length > 0 ? (
+          <button
+            className="button secondary"
+            type="button"
+            onClick={() => {
+              setBoxes({});
+              setTextFields([]);
+              setPendingBox(null);
+              setPendingLabel("");
+            }}
+          >
             Clear boxes
           </button>
         ) : null}
@@ -279,7 +513,12 @@ export default function TemplateEditor({ pageDataUrl, pageMM, initialName, onCan
 
       {!canSave ? (
         <p style={{ marginTop: 10, fontSize: 13, color: "var(--muted)" }}>
-          {drawn.length === 0 ? "Draw at least one box" : "Give the form a name"} to save it.
+          {pendingBox
+            ? "Add or discard the pending text field"
+            : drawn.length === 0 && textFields.length === 0
+              ? "Draw at least one box"
+              : "Give the form a name"}{" "}
+          to save it.
         </p>
       ) : null}
     </div>

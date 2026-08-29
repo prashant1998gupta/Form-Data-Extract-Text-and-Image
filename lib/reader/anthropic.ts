@@ -41,6 +41,9 @@ export function anthropicProvider(options: AnthropicOptions): TextProvider {
   return {
     name: "anthropic",
     model,
+    // Anthropic's limits fit per-field requests comfortably, so the mode with
+    // the structurally unmisattributable value→field mapping stays default.
+    preferredMode: "perField",
     async read(request: ReadRequest): Promise<string> {
       let response: Anthropic.Beta.BetaMessage;
       try {

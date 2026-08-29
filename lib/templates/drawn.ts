@@ -23,12 +23,47 @@
 
 import type { PageSizeKey } from "../geometry/frames.ts";
 
-/**
- * The three elements a person can draw. The handwriting reader (`lib/reader/`)
- * exists now, but a drawn text field also needs a label and a type, which the
- * editor does not collect yet — so taught templates stay image-only.
- */
+/** The three image elements a person can draw. Text fields are drawn separately — see `DrawnTextField`. */
 export type DrawnElement = "photograph" | "signature" | "thumbImpression";
+
+/**
+ * The answer shapes a drawn text field can declare.
+ *
+ * A deliberate subset of `FieldType`: the ones a single drawn box plus a label
+ * can honestly describe. Choice fields (dropdown, radio, checkbox) need their
+ * options declared, which is builder UI this editor does not have — offering
+ * the type without the options would read every choice as free text while
+ * looking like it understood the form.
+ */
+export const DRAWN_TEXT_TYPES = [
+  "shortText",
+  "longText",
+  "name",
+  "phone",
+  "email",
+  "number",
+  "date",
+  "age",
+  "address",
+] as const;
+export type DrawnTextType = (typeof DRAWN_TEXT_TYPES)[number];
+
+/**
+ * A text field taught by drawing: where the answer goes, what the form calls
+ * it, and what shape of answer it takes. The label matters beyond display —
+ * the reader quotes it to the model to separate printed furniture from the
+ * handwritten answer.
+ */
+export interface DrawnTextField {
+  readonly label: string;
+  readonly textType: DrawnTextType;
+  readonly box: {
+    readonly xMM: number;
+    readonly yMM: number;
+    readonly widthMM: number;
+    readonly heightMM: number;
+  };
+}
 
 export interface DrawnBox {
   readonly type: DrawnElement;
@@ -55,4 +90,10 @@ export interface DrawnTemplate {
   /** Key into `PAGE_SIZES`. Foolscap matters here — much of the target market prints on it. */
   readonly page: PageSizeKey;
   readonly fields: readonly DrawnBox[];
+  /**
+   * Optional so every template taught before text fields existed still parses
+   * — localStorage holds templates from old sessions, and a stored template
+   * must never stop working because the app learned something new.
+   */
+  readonly textFields?: readonly DrawnTextField[];
 }

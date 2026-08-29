@@ -33,6 +33,10 @@ export function groqProvider(options: GroqOptions): TextProvider {
   return {
     name: "groq",
     model,
+    // Groq prices every image at a flat ~2k input tokens and its free tier
+    // caps tokens per minute below one scan's worth of per-field requests —
+    // eight requests can never finish, one composite always can.
+    preferredMode: "composite",
     async read(request: ReadRequest): Promise<string> {
       let response: Response;
       try {
@@ -46,7 +50,12 @@ export function groqProvider(options: GroqOptions): TextProvider {
             model,
             // Deterministic-as-available: transcription has one right answer.
             temperature: 0,
-            max_tokens: 512,
+            // Generous on purpose: a composite reply carries up to 40 fields'
+            // transcriptions, some legitimately paragraph-length, and output
+            // tokens only cost when generated — while a cap that truncates
+            // mid-JSON fails the WHOLE scan as a format violation. Cheap
+            // insurance against an expensive misdiagnosis.
+            max_tokens: 4096,
             response_format: { type: "json_object" },
             messages: [
               { role: "system", content: request.system },
@@ -86,6 +95,13 @@ export function groqProvider(options: GroqOptions): TextProvider {
         throw new ProviderError("the reader's reply could not be read", { retryable: false });
       }
 
+      // Truncation is named as what it is. Without this branch a reply cut
+      // mid-JSON surfaces as "not in the agreed format" — a budget problem
+      // misreported as a model contract violation, unretried and unactionable.
+      if (finishReason(payload) === "length") {
+        throw new ProviderError("the reader ran out of room before answering", { retryable: false });
+      }
+
       const content = messageContent(payload);
       if (content === null) {
         throw new ProviderError("the reader's reply carried no text", { retryable: false });
@@ -97,13 +113,23 @@ export function groqProvider(options: GroqOptions): TextProvider {
 
 /** `choices[0].message.content`, verified rather than cast. */
 function messageContent(payload: unknown): string | null {
-  if (typeof payload !== "object" || payload === null) return null;
-  const choices = (payload as { choices?: unknown }).choices;
-  if (!Array.isArray(choices) || choices.length === 0) return null;
-  const message = (choices[0] as { message?: unknown }).message;
+  const message = firstChoice(payload)?.message;
   if (typeof message !== "object" || message === null) return null;
   const content = (message as { content?: unknown }).content;
   return typeof content === "string" ? content : null;
+}
+
+function finishReason(payload: unknown): string | null {
+  const reason = firstChoice(payload)?.finish_reason;
+  return typeof reason === "string" ? reason : null;
+}
+
+function firstChoice(payload: unknown): { message?: unknown; finish_reason?: unknown } | null {
+  if (typeof payload !== "object" || payload === null) return null;
+  const choices = (payload as { choices?: unknown }).choices;
+  if (!Array.isArray(choices) || choices.length === 0) return null;
+  const choice = choices[0];
+  return typeof choice === "object" && choice !== null ? (choice as { message?: unknown; finish_reason?: unknown }) : null;
 }
 
 function statusMessage(status: number): string {

@@ -6,10 +6,9 @@ Turn handwritten paper forms into verified digital records.
 passport photograph, the signature and the thumb impression as separate
 images**, and — when an AI key is configured — **reads the handwritten text
 fields** and presents every value for human verification beside the exact crop
-it was read from. The image extraction works on any form: draw a box around
-each element once, and those crops are extracted from then on. (Text reading
-needs a template that declares text fields, which taught forms do not yet —
-see [Status](#status).)
+it was read from. It works on any form: draw a box around each element once —
+the three image elements, and labelled text fields, up to 40 regions in all —
+and that form is extracted, and with a key read, from then on.
 
 **There is exactly one model call in it, and it is optional.** Everything
 geometric is a deliberate no-AI design: `sharp` decodes and resizes, and every
@@ -19,8 +18,9 @@ fitting, homographies). When it reports 97 % on a photograph it has measured a
 step in lightness, chroma and texture across a physical boundary — it is not
 recognising anything. The one thing that machinery cannot do is *read*, so
 handwritten text goes to a vision model (`lib/reader/`) under a deliberately
-narrow contract: **the model supplies values, never geometry**, one field per
-request, from a crop this pipeline cut deterministically. No key, no model
+narrow contract: **the model supplies values, never geometry** — one field per
+request, or one numbered composite per scan where a provider's limits demand
+it, always from crops this pipeline cut deterministically. No key, no model
 call — and the app runs exactly as before.
 
 **What the intended product adds, and this does not have yet.** The vision
@@ -53,19 +53,22 @@ detector measured on its own; the pipeline figure is the one to quote, and it
 dips to ~0.92 around 2–3 mm.)
 
 **Built, behind a key.** Handwritten text extraction for every text field the
-template declares with geometry — the seeded hospital form's eight, today. Set
+template declares with geometry — the seeded hospital form's eight, and any
+field taught by drawing: the editor's "+ Text field" draws a box, names it as
+the form prints it, and picks its answer shape (name, phone, date, …). Set
 `GROQ_API_KEY` or `ANTHROPIC_API_KEY` (see [Reading the handwritten
 text](#reading-the-handwritten-text)) and each field is transcribed by a vision
 model and shown for review beside the exact crop it was read from. Without a
-key the section says so and everything else runs unchanged. Taught forms are
-still image-only: the editor draws three boxes and collects no labels or types,
-so a taught template declares no text field for the reader to answer.
+key the section says so and everything else runs unchanged. Choice fields
+(dropdown, radio, checkbox) still cannot be taught by drawing — they need
+their options declared, which is builder UI.
 
 **Not built.** Persistence: nothing is saved anywhere, so the
 "original form archived" half of the product does not exist yet, and the client
 re-encodes the capture before upload, so even the bytes that reach the server are
 not the original ones. The no-code builder with sections and 17 typed field
-types (the taught-form editor covers only the three image regions). Published
+types (the taught-form editor covers the three image regions plus label-and-type
+text fields — not sections, options, or the other builder machinery). Published
 form links. Doctor and Patient views. The confidence calibrator. Template
 registration against a *stored blank* — [`template-anchors.ts`](lib/regions/template-anchors.ts)
 checks only that a template's own declared landmarks are where it says, which is
@@ -78,7 +81,7 @@ is still ahead.
 ```bash
 npm install
 npm run dev            # http://localhost:3000 — upload a form, see the crops
-npm test               # 216 tests
+npm test               # 236 tests
 npm run build
 
 node --experimental-strip-types scripts/demo-extract.ts    # crops to disk, scored
@@ -259,17 +262,30 @@ and it is boxed in on every side (`lib/reader/`):
 **One field, one request, one crop.** Each text field's answer area is cut from
 the rectified page at its template-declared box — the same millimetre geometry,
 in the same canonical space, that anchors the photograph's search region —
-padded 2.5 mm for ascenders and overruns, and sent as its own request. The model is never shown the whole page and never asked which field a
-value belongs to: request N *is* field N, so a value cannot land under the
-wrong label by a model miscounting rows. The alternative — one page-sized
-request returning key–value pairs — asks the model to do attribution, which is
+padded 2.5 mm for ascenders and overruns, and sent as its own request. The
+model is never shown the whole page and never asked which field a value
+belongs to: request N *is* field N, so a value cannot land under the wrong
+label by a model miscounting rows. The alternative — one page-sized request
+returning key–value pairs — asks the model to do attribution, which is
 geometry, which is the thing a model does not supply here.
 
+**Except where the provider's limits price that out — then one honest pass.**
+Groq bills every image a flat ~2k input tokens and its free tier caps tokens
+per minute below eight requests' worth, so a per-field scan there can *never*
+finish. On such providers the reader switches to **composite mode**
+(`lib/reader/composite.ts`): every crop stacked into one image, each strip's
+number printed into the pixels by us, one request per scan. The reply is keyed
+by strip number — a skipped strip fails that field alone and can never shift
+its neighbours — and every value still lands in front of a human beside its
+own crop. Default: composite on Groq, per-field on Anthropic;
+`FORMLINK_TEXT_MODE` overrides.
+
 **The evidence is the model's own input.** The verify screen shows each value
-beside the exact crop the model read, byte for byte. Every value is editable
-and every value requires review — there is no confidence number that buys a
-value out of it, because no number on screen may be a model's opinion of
-itself.
+beside the crop the model read — byte for byte in per-field mode; in composite
+mode, the same pixels the model saw at that strip's position, re-encoded on
+their own. Every value is editable and every value requires review — there is
+no confidence number that buys a value out of it, because no number on screen
+may be a model's opinion of itself.
 
 **Blank and unreadable are different answers.** `""` means the model asserts
 the box is empty — a positive claim about examined pixels. `null` means it
@@ -300,7 +316,8 @@ decided by the environment, never by anything in the request.
 
 **A key on a public deployment is spend anyone can trigger.** `/api/extract`
 has no authentication — nothing here does yet — so once a key is set, an
-anonymous POST of a registerable capture costs you eight metered vision calls,
+anonymous POST of a registerable capture costs you a scan's worth of metered
+vision calls (one composite request on Groq; one request per field on Claude),
 and the sample form that registers is served by the deployment itself. Three
 honest mitigations, in order of honesty: don't put a key on a public
 deployment; set a spend cap in the provider's console; and the built-in bound —
@@ -309,11 +326,14 @@ at most `FORMLINK_TEXT_MAX_SCANS_PER_MINUTE` scans reach the model per minute
 brake, not a lock. `lib/reader/throttle.ts` says exactly what it is and is not.
 The real fix is the authentication the roadmap already owes.
 
-One honest caveat about the bundled samples: their "handwriting" is generated
-pseudo-glyphs with the stroke statistics of writing but no letters in them
-(`tests/helpers/synthetic-form.ts` says so itself). A reader that reports them
-mostly unreadable is reading them correctly. Photograph a real filled-in form
-to see transcription work.
+The bundled samples are legible on purpose. Their handwriting is a jittered
+single-stroke print font (`tests/helpers/stroke-font.ts`) writing known values
+— ANITA SHARMA, B+, 98765 43210 — that the generator returns as ground truth,
+so a scan with a key can be checked against a right answer. (An earlier version
+shipped statistical scrawl with no letters in it, which made every honest
+reader look broken: a demo that manufactures its own illegibility cannot
+demonstrate reading.) Real handwriting is still messier — photograph a real
+filled-in form before believing any accuracy impression the samples give.
 
 ## Everything is measured against this scan
 
@@ -342,7 +362,8 @@ constants work on a 170 dpi WhatsApp recompression and a 600 dpi flatbed scan.
 Real filled-in patient forms are personal medical data. They cannot go in a
 repository, and a test suite that needs them is a test suite nobody runs.
 
-So fixtures are generated: a printed skeleton, handwriting that crosses its
+So fixtures are generated: a printed skeleton, legible handwriting (known
+values, returned as ground truth) that crosses its
 rules, a pasted photograph, a signature with a flourish that overruns its box, a
 thumb impression with realistic ridge spacing — plus perspective, skew, shadow,
 glare, photocopy speckle and sensor noise. Everything is seeded, so a failure
@@ -388,8 +409,10 @@ lib/vision/      pure-TS image primitives, browser+server isomorphic
 lib/geometry/    Canonical Template Space — everything persisted is in mm
 lib/ink/         paper statistics, photometric normalisation, caption removal
 lib/reader/      the handwritten-text reader: one field, one request, one crop
-                 prompt · parse (reply trust boundary) · crop · provider
-                 groq · anthropic — enabled by an API key, absent without one
+                 (or one composite request per scan, for token-capped tiers)
+                 prompt · parse (reply trust boundary) · crop · composite
+                 provider · groq · anthropic · throttle — enabled by an API
+                 key, absent without one
 lib/regions/     photo · signature · thumb · postprocess · params
                  form-presence   (is this a printed form at all?)
                  template-anchors (is it THIS form? absence needs an answer)
@@ -397,8 +420,8 @@ lib/templates/   form definition; the hospital form is its first tenant
                  custom + drawn — a form TAUGHT by drawing boxes on it
 lib/pipeline/    bytes -> crops, driven by a template
 app/             verification screen + /api/extract
-tests/           216 tests + the synthetic form generator
-scripts/         demo-extract, preview-fixture
+tests/           236 tests + the synthetic form generator
+scripts/         demo-extract, preview-fixture, make-samples
 docs/            product spec, architecture build spec
 ```
 

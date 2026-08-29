@@ -3,8 +3,9 @@
  *
  * WHAT THIS IS. `/api/extract` has no authentication — nothing in this app
  * does yet — and the reader turned an anonymous POST from "costs us 60 s of
- * CPU" into "costs us eight metered vision calls". Anyone can fetch the
- * bundled sample form from the deployment itself and loop it. This bound
+ * CPU" into "costs us a scan's worth of metered vision calls" (one composite
+ * request, or one per field, by mode). Anyone can fetch the bundled sample
+ * form from the deployment itself and loop it. This bound
  * converts unlimited spend per instance into a stated number per minute, and
  * refuses the excess in words the operator sees.
  *

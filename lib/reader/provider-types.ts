@@ -14,9 +14,22 @@ export interface ReadRequest {
   readonly timeoutMs: number;
 }
 
+/**
+ * How a scan's fields reach the model.
+ *
+ * `perField` — one request per field; the value→field mapping is structural
+ * and cannot be misattributed. The default wherever limits allow.
+ * `composite` — every crop stacked into one numbered image, one request per
+ * scan; the mode for providers whose per-minute token caps price a flat
+ * ~2k tokens per image, where eight requests cannot fit but one can.
+ */
+export type ReadMode = "perField" | "composite";
+
 export interface TextProvider {
   readonly name: "groq" | "anthropic";
   readonly model: string;
+  /** The mode this provider's limits are best served by. Overridable via FORMLINK_TEXT_MODE. */
+  readonly preferredMode: ReadMode;
   /** Returns the model's raw reply text. Throws `ProviderError` on transport failure. */
   read(request: ReadRequest): Promise<string>;
 }
