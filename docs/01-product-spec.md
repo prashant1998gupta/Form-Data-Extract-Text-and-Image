@@ -229,43 +229,46 @@ memory. `~` means partly done, and says which part.
 
 ### Must
 - [ ] Org admin builds a form from sections + fields, no code, and publishes it to a link.
-      `~` A form can be TAUGHT by drawing boxes over it
-      ([`lib/templates/custom.ts`](../lib/templates/custom.ts),
-      [`app/TemplateEditor.tsx`](../app/TemplateEditor.tsx)) and persists in
-      localStorage. No sections, no typed text fields, no publishable link.
+      `~` **Builds and publishes, without sections.** `/forms/new` photographs a
+      blank copy, draws labelled and typed boxes over the rectified page
+      ([`app/TemplateEditor.tsx`](../app/TemplateEditor.tsx)), and publishes to
+      `/f/<slug>` ([`lib/db/forms.ts`](../lib/db/forms.ts)). No code is involved.
+      Missing: sections grouping fields, and editing a published form's boxes.
 - [ ] All 17 field types from §3.4 exist and render in the builder and the verify screen.
       `~` The three image types plus nine text types (short/long text, name,
       phone, email, number, date, age, address) are drawable in the taught-form
       editor with a label; every text field a template declares with geometry
       is READ by the optional handwriting reader
       ([`lib/reader/`](../lib/reader/), behind an API key) and rendered for
-      review. Missing: dropdown/checkbox/radio (their options need builder UI),
-      document, custom — and there is still no builder, sections, or publish.
+      review. Choice fields (dropdown, radio, checkbox) are drawable WITH their
+      printed options, and an answer that matches none of them is flagged
+      rather than silently accepted. 15 of 17 types: `document` and `custom`
+      are still missing, as are sections.
 - [x] **Staff capture via camera or file upload, on desktop and mobile.**
       `capture="environment"` plus a file input; verified on a 375 px viewport.
       Captures are resized in the browser first
       ([`lib/client/prepare-upload.ts`](../lib/client/prepare-upload.ts)) because
       the host rejects bodies over 4.5 MB.
 - [ ] The **original image is stored permanently and unmodified** with the record.
-      **⚠ Currently moving AWAY from this, not toward it.** Nothing is stored at
-      all, and the browser RE-ENCODES any capture over 4 MB or 3500 px on its
-      long edge before upload (smaller captures pass through untouched —
-      [`lib/client/prepare-upload.ts`](../lib/client/prepare-upload.ts)), so for
-      exactly the phone photos this requirement most concerns, the bytes the
-      server sees are already not the original. That was the only way
-      to get phone photos past the 4.5 MB edge limit without a Storage bucket,
-      and it is an interim measure that must be UNDONE — see
-      [02-architecture.md](02-architecture.md) Stage 1, direct-to-Storage upload.
-      This is the one Must item where the shipped code regressed against the
-      requirement, so it is flagged rather than left as a silent empty box.
+      `~` **Stored permanently now — "unmodified" has one caveat, stated rather
+      than glossed.** Every Save archives the capture to a private bucket beside
+      the record ([`lib/db/records.ts`](../lib/db/records.ts)), and the Doctor
+      view links to it. What is archived is the bytes THE SERVER RECEIVED: the
+      browser still re-encodes a capture over 4 MB or 3500 px on its long edge
+      to clear the 4.5 MB edge limit ([`lib/client/prepare-upload.ts`](../lib/client/prepare-upload.ts)),
+      so for large phone photos those are not byte-for-byte the camera's
+      output. Smaller captures pass through untouched. Direct-to-Storage upload
+      ([02-architecture.md](02-architecture.md) Stage 1) is what closes the gap.
 - [ ] Extraction is constrained to the admin-defined field schema.
       `~` True for images AND text: only declared boxes are extracted, and
       values are read against a key the server chose. A model can never ADD a
       field; in per-field mode it cannot re-address one either (the mapping is
       structural), while in composite mode re-addressing is mitigated — strip
       numbers we print into the image, review-always — rather than impossible.
-      Unticked only because the schema is taught by drawing rather than
-      admin-defined in a builder.
+      The schema is now admin-defined — drawn in the builder and published —
+      and a published form's geometry is loaded server-side rather than sent
+      with the scan, so a scan cannot redefine its own fields. Unticked only
+      because "admin" is not yet a real identity: there are no accounts.
 - [x] **Photograph, signature and thumb impression are detected and cropped as separate images.**
       The engine, and the differentiator. See [Measured accuracy](../README.md#measured-accuracy).
 - [x] **Absent elements report Not Detected. Nothing is ever fabricated.**
@@ -278,17 +281,29 @@ memory. `~` means partly done, and says which part.
       single-pass reader could show is the model's opinion of itself, which
       nothing on this screen is allowed to be. Real text confidence arrives
       with the fusion machinery of [02-architecture.md](02-architecture.md) §5.
-- [ ] Verify screen: original left, editable digital form right.
-      `~` Original left; extracted elements and, with a key, every read text
-      value in an editable input beside the exact crop the model saw. Edits
-      survive a template-editor round trip but persist nowhere — there is no
-      record for them to land in yet.
+- [x] **Verify screen: original left, editable digital form right.**
+      Original left; extracted elements and every read text value in an
+      editable input beside the crop it was read from. On a published form's
+      link the edits are what Save writes, each tagged with whether the
+      operator accepted the reading or replaced it.
 - [x] **No record is written without an explicit human Save.**
-      Trivially satisfied: nothing is written at all. Re-check when persistence lands.
+      No longer trivial. `POST /api/records` is the only writer, it is reachable
+      only from the Save button, and it stores what the human left rather than
+      what the reader produced. There is no auto-save path anywhere.
 - [ ] Record stores: values, original scan, cropped images, documents, timestamp, form
       version used, and the user who processed it.
-- [ ] Hospital tenant renders Doctor View and Patient View from a saved record.
+      `~` Stores values (each with its provenance), the original scan, the three
+      cropped images, the timestamp, and the form it belongs to. Missing:
+      uploaded documents, a form VERSION (a form is edited in place today, so a
+      record cannot say which layout read it), and the user — there are no
+      accounts.
+- [x] **Hospital tenant renders Doctor View and Patient View from a saved record.**
+      `/r/<reference>` — the Doctor view carries the photograph, every value
+      with how it was arrived at, the signature and thumb crops, and a link to
+      the archived paper; the Patient receipt is the simpler printable one.
 - [ ] Patient receipt downloads and prints.
+      `~` Prints (and so saves as PDF through the browser's print dialog). No
+      dedicated download.
 
 ### Should
 - [x] **Staff can correct a crop by dragging its box on the original image.**
@@ -317,7 +332,7 @@ already exists somewhere, this says where.
 | Doc | Covers | Status |
 |---|---|---|
 | [02-architecture.md](02-architecture.md) | Stack, deployment, module layout, and every pipeline stage in detail | **Written.** The build spec. |
-| `03-data-model.md` | Postgres schema, RLS, Storage buckets | Not written. Draft lives in [02-architecture.md](02-architecture.md) §7. |
+| `03-data-model.md` | Postgres schema, RLS, Storage buckets | Not written. The full draft is in [02-architecture.md](02-architecture.md) §7; the SHIPPED schema is far smaller — `forms`, `records`, and two private buckets — and its row-level security is written for a deployment with **no accounts yet**, which the migration says in so many words. |
 | `04-region-extraction.md` | Photo / signature / thumb detection — the core engine | Not written. The engine is BUILT; [02-architecture.md](02-architecture.md) §3 specifies it, and the code in [`lib/regions/`](../lib/regions/) carries the reasoning in its module headers. |
 | `05-text-extraction.md` | Field reading, validation, normalization | Not written. An interim single-pass reader IS built — [`lib/reader/`](../lib/reader/), documented in the [README](../README.md#reading-the-handwritten-text); the multi-reader fusion, validation and normalization remain specified-only in [02-architecture.md](02-architecture.md) §4. |
 | `06-confidence.md` | How every percentage on screen is computed | Not written. Specified in [02-architecture.md](02-architecture.md) §5. The calibrator is not built; the numbers currently shown are raw detector scores. |

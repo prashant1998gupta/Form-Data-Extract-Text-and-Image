@@ -81,7 +81,7 @@ Four frames. Confusing them is the single most common source of silent misalignm
 
 ### Stage 1 — Direct-to-Storage upload and job creation (browser → server)
 
-> **Status.** NOT BUILT — no Supabase project, no signed upload, no `scans` row, no job runner. SUBSTITUTED: the browser downscales so the POST fits under the 4.5 MB cap. That workaround has a real cost recorded in [01-product-spec.md](01-product-spec.md) §5 — the capture is RE-ENCODED, so the Must item "the original image is stored permanently and unmodified" is currently moving away from satisfaction, and this stage is how it gets undone.
+> **Status.** SUBSTITUTED. A Supabase project, a `forms` table, a `records` table and two private storage buckets exist, and a Save archives the capture and the crops before the row is written ([`lib/db/`](../lib/db/)). NOT BUILT as specified: signed DIRECT-to-Storage upload (the capture still goes through the function), the `scans` row, the job runner and Realtime — extraction is synchronous in the request. SUBSTITUTED: the browser downscales so the POST fits under the 4.5 MB cap. That workaround has a real cost recorded in [01-product-spec.md](01-product-spec.md) §5 — the capture is RE-ENCODED, so the Must item "the original image is stored permanently and unmodified" is currently moving away from satisfaction, and this stage is how it gets undone.
 
 **What.** Browser requests a signed upload URL, PUTs the original directly to Supabase Storage, then POSTs a small JSON job.
 

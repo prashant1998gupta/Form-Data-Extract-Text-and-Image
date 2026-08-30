@@ -23,12 +23,19 @@ request, or one numbered composite per scan where a provider's limits demand
 it, always from crops this pipeline cut deterministically. No key, no model
 call — and the app runs exactly as before.
 
-**What the intended product adds, and this does not have yet.** The vision
-(below, and in the spec) is a no-code builder where an organization recreates
-its paper form as sections and typed fields and publishes it to a link. None of
-that is built: there is no builder, no published links, no database, and
-nothing is stored anywhere. Read [Status](#status) before quoting any of it to
-anyone.
+**It is a whole application now, not a scanner.** Build a form by photographing
+a blank copy and drawing on it, publish it to a link, scan filled copies from
+that link, check every value, and **Save** — which writes one record with the
+extracted images and the original photograph of the paper archived beside it,
+readable afterwards as a Doctor view and a printable Patient receipt. The
+database half is optional too: without one, everything above still scans and
+reads, and only publishing, saving and the record views say they are off.
+
+**What is still not built.** Accounts and organizations — the endpoints are
+unauthenticated, which is the honest limit on deploying this publicly. Sections
+inside a form, the `document` and `custom` field types, the learning-from-
+corrections loop, and the confidence calibrator. Read [Status](#status) before
+quoting any of it to anyone.
 
 Spec: [`Doc/Form Data Extract Text and Image.pdf`](<Doc/Form Data Extract Text and Image.pdf>) ·
 transcribed in [docs/01-product-spec.md](docs/01-product-spec.md).
@@ -54,25 +61,33 @@ dips to ~0.92 around 2–3 mm.)
 
 **Built, behind a key.** Handwritten text extraction for every text field the
 template declares with geometry — the seeded hospital form's eight, and any
-field taught by drawing: the editor's "+ Text field" draws a box, names it as
-the form prints it, and picks its answer shape (name, phone, date, …). Set
+field drawn in the builder: draw a box, name it as the form prints it, pick its
+answer shape (name, phone, date, dropdown with its printed choices, …). Set
 `GROQ_API_KEY` or `ANTHROPIC_API_KEY` (see [Reading the handwritten
 text](#reading-the-handwritten-text)) and each field is transcribed by a vision
-model and shown for review beside the exact crop it was read from. Without a
-key the section says so and everything else runs unchanged. Choice fields
-(dropdown, radio, checkbox) still cannot be taught by drawing — they need
-their options declared, which is builder UI.
+model and shown for review beside the crop it was read from. Without a key the
+section says so and everything else runs unchanged. 15 of the spec's 17 field
+types can be declared; `document` and `custom` cannot.
 
-**Not built.** Persistence: nothing is saved anywhere, so the
-"original form archived" half of the product does not exist yet, and the client
-re-encodes the capture before upload, so even the bytes that reach the server are
-not the original ones. The no-code builder with sections and 17 typed field
-types (the taught-form editor covers the three image regions plus label-and-type
-text fields — not sections, options, or the other builder machinery). Published
-form links. Doctor and Patient views. The confidence calibrator. Template
-registration against a *stored blank* — [`template-anchors.ts`](lib/regions/template-anchors.ts)
-checks only that a template's own declared landmarks are where it says, which is
-a far weaker claim than the anchor-atlas registration the architecture describes.
+**Built, behind a database.** The whole workflow: **build** a form by
+photographing a blank copy and drawing on it, **publish** it to a link, **scan**
+filled copies from that link, **save** a verified record, and read it back as a
+**Doctor view** and a printable **Patient receipt**. The original capture is
+archived with each record, and every saved value carries how it came to be —
+`read`, `corrected`, `typed` or `blank` — which is what makes a record
+auditable rather than merely stored. Set `NEXT_PUBLIC_SUPABASE_URL` and
+`SUPABASE_SERVICE_ROLE_KEY`; without them these screens say so and the scanner
+still runs. See [The application](#the-application).
+
+**Not built.** ACCOUNTS — every endpoint is unauthenticated, and that is the
+honest limit on deploying this publicly with real patient data: anyone with the
+URL can publish a form, save a record, or read one. Sections inside a form. The
+`document` and `custom` field types. The learning-from-corrections loop
+(a correction improves that scan only; it does not yet teach the template). The
+confidence calibrator. Template registration against a *stored blank* —
+[`template-anchors.ts`](lib/regions/template-anchors.ts) checks only that a
+template's own declared landmarks are where it says, which is a far weaker
+claim than the anchor-atlas registration the architecture describes.
 
 The full plan is in [docs/02-architecture.md](docs/02-architecture.md), which is
 a build spec rather than a sketch. It describes the finished system; most of it
@@ -80,21 +95,70 @@ is still ahead.
 
 ```bash
 npm install
-npm run dev            # http://localhost:3000 — upload a form, see the crops
-npm test               # 236 tests
+npm run dev            # http://localhost:3000
+npm test               # 238 tests
 npm run build
 
 node --experimental-strip-types scripts/demo-extract.ts    # crops to disk, scored
 node --experimental-strip-types scripts/preview-fixture.ts # generate fixtures
+node --experimental-strip-types scripts/make-samples.ts    # rebuild public/samples
 ```
 
-Node >= 22.13. **No API key is needed for any of the above** — the crops, the
-tests and the demo script call no model. An API key enables exactly one thing,
-the handwritten-text reader: copy `.env.example` to `.env.local` and set
-`GROQ_API_KEY` (free tier at console.groq.com/keys) or `ANTHROPIC_API_KEY`.
-Three sample forms are bundled, including an unfilled one: anyone can demo a
-detector on a form with everything pasted on it, and the question a hospital
-actually asks is what happens when the patient brought no photograph.
+Node >= 22.13. **Nothing above needs a key** — the crops, the tests and the
+demo script call no model and touch no database. Copy `.env.example` to
+`.env.local` to switch either optional half on: `GROQ_API_KEY` (free tier at
+console.groq.com/keys) or `ANTHROPIC_API_KEY` for the reader,
+`NEXT_PUBLIC_SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` for persistence.
+Three sample forms are bundled — a desk photo, a photocopy, and a genuinely
+blank one: anyone can demo a detector on a form with everything pasted on it,
+and the question a hospital actually asks is what happens when the patient
+brought no photograph.
+
+---
+
+## The application
+
+Four screens, in the order the product is used.
+
+**Forms** (`/forms`, `/forms/new`) — build a form by photographing a **blank**
+copy and drawing a box around everything people write in. Every competing
+design of this screen is a widget-dragging form builder, and every one of them
+produces a digital form that has no idea where anything is on the paper. This
+product's whole advantage is that it knows, so the builder *is* the paper:
+boxes on the rectified page, stored in millimetres. Publishing mints a link.
+
+**A form's link** (`/f/<slug>`) — what staff open. The geometry is loaded
+server-side and identified to the scanner by id alone: a published form's boxes
+belong to the organization, and a scan must not be able to redefine where its
+own crops are cut.
+
+**Verify and Save** — the same two-up screen as ever, plus one button. Save
+sends what the human left, not what the reader produced, each value tagged
+`read` / `corrected` / `typed` / `blank`. That tag is the audit trail, and it
+costs one field.
+
+**Records** (`/records`, `/r/<reference>`) — the Doctor view (everything, with
+the evidence crops and a link to the archived original) and the Patient receipt
+(deliberately simpler, and printable). References are random rather than
+sequential: `HSP-4F2A19` printed on a receipt should not tell a stranger how
+many patients were seen this week.
+
+Two notes on how the data is handled, because both are load-bearing:
+
+- **The images are served by this application, never as storage links.** A
+  signed URL in the page is a bearer token for a patient's photograph that
+  keeps working after the tab closes and can be pasted anywhere. The buckets
+  are private and the token never leaves the server.
+- **A stored form round-trips through the same parser a browser-supplied one
+  does.** The database is a second door into the extractor; it gets the same
+  lock. See the trust-boundary note in
+  [`lib/templates/custom.ts`](lib/templates/custom.ts).
+
+The schema, its row-level security, and what those policies do and do not
+promise are in the migrations applied to the project (`forms`, `records`, and
+two private storage buckets). **There is no authentication yet**, so the
+policies are written for that reality rather than pretending otherwise — read
+the note in the migration before putting real patient data behind this.
 
 Measured through the running app, end to end:
 
@@ -418,8 +482,12 @@ lib/regions/     photo · signature · thumb · postprocess · params
                  template-anchors (is it THIS form? absence needs an answer)
 lib/templates/   form definition; the hospital form is its first tenant
                  custom + drawn — a form TAUGHT by drawing boxes on it
+lib/db/          persistence, optional: client (server-only) · forms · records
+                 the Save, the archive, and the signed reads
 lib/pipeline/    bytes -> crops, driven by a template
-app/             verification screen + /api/extract
+app/             the application: home · forms + builder · f/[slug] (a form's
+                 link) · records + r/[reference] (Doctor view, Patient receipt)
+                 api/extract · api/forms · api/records
 tests/           236 tests + the synthetic form generator
 scripts/         demo-extract, preview-fixture, make-samples
 docs/            product spec, architecture build spec
