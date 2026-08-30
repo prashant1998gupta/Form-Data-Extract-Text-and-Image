@@ -59,6 +59,13 @@ export interface SyntheticFormOptions {
   readonly noise?: number;
   /** Page rotation in degrees, applied last. */
   readonly skew?: number;
+  /**
+   * Whether the field rows carry handwritten values. False renders a truly
+   * BLANK form — printed labels and rules, nothing written — which is what an
+   * organization photographs when teaching the app its form, and what the
+   * "unfilled" sample must be for that instruction to be honest.
+   */
+  readonly withHandwriting?: boolean;
   /** Margin of dark "desk" around the page, in pixels. 0 means the page fills the frame. */
   readonly desk?: number;
 }
@@ -113,6 +120,7 @@ export function renderSyntheticForm(options: SyntheticFormOptions = {}): Synthet
     shadow = 0,
     glare = false,
     photocopy = false,
+    withHandwriting = true,
     noise = 0.02,
     skew = 0,
     desk = 0,
@@ -231,7 +239,7 @@ export function renderSyntheticForm(options: SyntheticFormOptions = {}): Synthet
     // all three are what make real forms hard. It is LEGIBLE now (see
     // stroke-font.ts for why the statistical scrawl had to go), and what it
     // says is returned as ground truth beside where it landed.
-    const value = FIELD_VALUES[label] ?? "";
+    const value = withHandwriting ? (FIELD_VALUES[label] ?? "") : "";
     const box = handwrittenValue(
       canvas,
       value,

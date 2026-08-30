@@ -163,7 +163,18 @@ function statusMessage(status: number): string {
   return "The form could not be processed.";
 }
 
-export default function ScanWorkbench() {
+/**
+ * The published form this scanner is bound to, when it is opened from a
+ * form's link. Its presence is what turns the verify screen from a
+ * demonstration into a step in a workflow: there is now somewhere for a
+ * verified scan to be SAVED.
+ */
+export interface BoundForm {
+  readonly id: string;
+  readonly name: string;
+}
+
+export default function ScanWorkbench({ form }: { form?: BoundForm }) {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
   // The operator's corrections to the transcribed values, keyed by fieldId.
@@ -188,6 +199,11 @@ export default function ScanWorkbench() {
   // empty — saving replaces the stored template by name, and an empty editor
   // meant every field the person did not redraw silently vanished.
   const lastTemplate = useRef<DrawnTemplate | null>(null);
+  /** The exact bytes the server received — what a Save archives. */
+  const lastUpload = useRef<File | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savedReference, setSavedReference] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const loaded = useRef(false);
   if (!loaded.current && typeof window !== "undefined") {
     loaded.current = true;
@@ -212,9 +228,17 @@ export default function ScanWorkbench() {
       lastFile.current = file;
       lastTemplate.current = template ?? null;
 
+      // The bytes actually sent, kept so a Save archives exactly what the
+      // server read rather than a second, differently-encoded copy.
+      lastUpload.current = prepared.file;
+
       const body = new FormData();
       body.append("image", prepared.file);
+      // A published form is named, never described: the server holds its
+      // geometry. A taught template travels with the scan because there is
+      // nowhere else for it to live.
       if (template) body.append("template", JSON.stringify(template));
+      else if (form) body.append("formId", form.id);
 
       let response: Response;
       try {
@@ -263,6 +287,81 @@ export default function ScanWorkbench() {
     },
     [submit],
   );
+
+  /**
+   * THE SAVE — the only thing on this screen that writes anything anywhere.
+   *
+   * It sends what the HUMAN left, not what the reader produced, and tags each
+   * value with which of those it is: `read` (accepted as transcribed),
+   * `corrected` (the operator changed it), `typed` (there was no reading and
+   * they wrote it), `blank` (asserted empty). That distinction is the whole
+   * audit trail, and it is the difference between a record you can defend and
+   * a record you merely have.
+   */
+  const save = useCallback(async () => {
+    if (!form || !result || saving) return;
+    setSaving(true);
+    setSaveError(null);
+
+    try {
+      const values = (result.text?.fields ?? []).map((field) => {
+        const edited = textEdits[field.fieldId];
+        const original = field.value ?? "";
+        const value = edited ?? original;
+        const source: "read" | "corrected" | "typed" | "blank" =
+          field.value === null && !edited
+            ? "typed"
+            : edited !== undefined && edited !== original
+              ? "corrected"
+              : field.blank
+                ? "blank"
+                : "read";
+        return { key: field.key, value, source };
+      });
+
+      const body = new FormData();
+      body.append("formId", form.id);
+      body.append("values", JSON.stringify(values));
+      body.append(
+        "extraction",
+        JSON.stringify({
+          page: result.page,
+          registration: result.registration,
+          reader: result.text ? { provider: result.text.provider, model: result.text.model, mode: result.text.mode } : null,
+          regions: result.regions.map((region) => ({
+            key: region.key,
+            found: region.found,
+            confidence: region.confidence,
+            reason: region.reason,
+          })),
+        }),
+      );
+
+      if (lastUpload.current) body.append("original", lastUpload.current);
+      for (const region of result.regions) {
+        if (!region.found || !region.dataUrl) continue;
+        const blob = await (await fetch(region.dataUrl)).blob();
+        const part =
+          region.type === "photograph" ? "photo" : region.type === "signature" ? "signature" : "thumb";
+        body.append(part, new File([blob], `${part}.png`, { type: "image/png" }));
+      }
+
+      const response = await fetch("/api/records", { method: "POST", body });
+      const payload = (await response.json().catch(() => null)) as
+        | { record?: { reference: string }; error?: string }
+        | null;
+
+      if (!response.ok || !payload?.record) {
+        setSaveError(payload?.error ?? "That record could not be saved. Please try again.");
+        return;
+      }
+      setSavedReference(payload.record.reference);
+    } catch {
+      setSaveError("The save did not reach the server. Check your connection and try again.");
+    } finally {
+      setSaving(false);
+    }
+  }, [form, result, saving, textEdits]);
 
   /**
    * Loads one of the bundled sample forms.
@@ -542,15 +641,66 @@ export default function ScanWorkbench() {
         </section>
       </div>
 
+      {/* THE SAVE, offered only where there is somewhere to save to. Its
+          absence on the demo path is not an omission — it is the honest state
+          of a scanner with no form behind it. */}
+      {form ? (
+        savedReference ? (
+          <div className="notice ok-notice" role="status" style={{ marginTop: 22 }}>
+            <strong>Saved as {savedReference}.</strong> The values you confirmed, the extracted
+            images and the original photograph are stored against {form.name}.
+            <div className="actions" style={{ justifyContent: "flex-start", marginTop: 12, flexWrap: "wrap" }}>
+              <a className="button" href={`/r/${savedReference}`}>
+                Open the record
+              </a>
+              <button
+                className="button secondary"
+                type="button"
+                onClick={() => {
+                  setSavedReference(null);
+                  setResult(null);
+                }}
+              >
+                Scan another
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="save-bar">
+            <div>
+              <strong>Everything above is a proposal until you save it.</strong>
+              <p>
+                Check each value against the crop beside it, correct anything wrong, then save. This
+                is the only step that writes a record.
+              </p>
+            </div>
+            <button className="button" type="button" onClick={() => void save()} disabled={saving}>
+              {saving ? "Saving…" : "Save this record"}
+            </button>
+          </div>
+        )
+      ) : null}
+
+      {saveError ? (
+        <p className="notice error" role="alert" style={{ marginTop: 14 }}>
+          {saveError}
+        </p>
+      ) : null}
+
       <div className="actions" style={{ marginTop: 24, justifyContent: "flex-start", flexWrap: "wrap" }}>
         {/* The escape hatch from every wrong answer on this screen. If the
             crops are wrong, they are wrong because the template describes a
             different form — and the person looking at them can fix that in
             three drags. Offered always, not only on a failure: a crop can be
-            subtly wrong on a form that registered perfectly well. */}
-        <button className="button" type="button" onClick={() => setEditing(true)}>
-          {result.registration.registered ? "Fix these boxes" : "Teach this form"}
-        </button>
+            subtly wrong on a form that registered perfectly well.
+            NOT offered on a published form: its boxes belong to the
+            organization, and correcting them is the builder's job, not a
+            per-scan one. */}
+        {form ? null : (
+          <button className="button" type="button" onClick={() => setEditing(true)}>
+            {result.registration.registered ? "Fix these boxes" : "Teach this form"}
+          </button>
+        )}
         <button className="button secondary" type="button" onClick={() => setResult(null)}>
           Scan another form
         </button>

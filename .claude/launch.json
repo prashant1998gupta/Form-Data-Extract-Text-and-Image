@@ -9,7 +9,10 @@
         "dev"
       ],
       "port": 3000,
-      "autoPort": true
+      "autoPort": true,
+      "env": {
+        "NODE_OPTIONS": "--use-system-ca"
+      }
     }
   ]
 }

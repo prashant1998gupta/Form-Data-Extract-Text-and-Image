@@ -80,11 +80,13 @@ interface Props {
    * ruinous at thirty labelled text fields.
    */
   readonly initial?: DrawnTemplate | null;
+  /** What the commit button says. The builder publishes; the scanner re-reads. */
+  readonly saveLabel?: string;
   readonly onCancel: () => void;
   readonly onSave: (template: DrawnTemplate) => void;
 }
 
-export default function TemplateEditor({ pageDataUrl, pageMM, initialName, initial, onCancel, onSave }: Props) {
+export default function TemplateEditor({ pageDataUrl, pageMM, initialName, initial, saveLabel, onCancel, onSave }: Props) {
   const [name, setName] = useState(initial?.name ?? initialName ?? "");
   const [active, setActive] = useState<ElementType>("photograph");
   const [boxes, setBoxes] = useState<Record<string, DrawnBox>>(() => {
@@ -490,7 +492,7 @@ export default function TemplateEditor({ pageDataUrl, pageMM, initialName, initi
             })
           }
         >
-          Save and read this form
+          {saveLabel ?? "Save and read this form"}
         </button>
         {drawn.length > 0 || textFields.length > 0 ? (
           <button

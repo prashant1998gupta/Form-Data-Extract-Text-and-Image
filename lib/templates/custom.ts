@@ -39,7 +39,7 @@
  */
 
 import { A4, PAGE_SIZES, type PageSizeMM, type RectMM } from "../geometry/frames.ts";
-import { DRAWN_TEXT_TYPES, type DrawnTextType } from "./drawn.ts";
+import { DRAWN_TEXT_TYPES, isChoiceType } from "./drawn.ts";
 import { isImageField, type FieldType, type FormField, type FormTemplate } from "./types.ts";
 
 /** Bounds. Generous for real forms, far below anything that threatens the function. */
@@ -179,9 +179,18 @@ function parseTextFields(raw: unknown, page: PageSizeMM): FormField[] {
     seenLabels.add(labelKey);
 
     const textType = source.textType;
-    if (typeof textType !== "string" || !(DRAWN_TEXT_TYPES as readonly string[]).includes(textType)) {
+    if (
+      typeof textType !== "string" ||
+      !((DRAWN_TEXT_TYPES as readonly string[]).includes(textType) || isChoiceType(textType))
+    ) {
       throw new TemplateError(`The field "${label}" has an unknown answer type.`, "template_bad_text_type");
     }
+
+    // A choice field is only honest with its options: without them it reads
+    // every answer as free text and cannot flag the one thing that matters,
+    // an answer that is not among the printed choices. So it is refused
+    // rather than silently degraded.
+    const options = isChoiceType(textType) ? parseOptions(source.options, label) : undefined;
 
     const box = parseBox(source.box, page);
 
@@ -195,13 +204,73 @@ function parseTextFields(raw: unknown, page: PageSizeMM): FormField[] {
       id: `drawn-text-${key}`,
       key,
       label,
-      type: textType as DrawnTextType,
+      type: textType as FieldType,
       box,
       origin: "drawn",
+      ...(options ? { options } : {}),
     });
   }
 
   return fields;
+}
+
+/** Bounds on a choice field's printed options. */
+const MAX_OPTIONS = 40;
+const MAX_OPTION_LENGTH = 60;
+
+/**
+ * The printed choices of a choice field.
+ *
+ * Quoted verbatim into the reader's prompt, so bounded and cleaned exactly as
+ * the label is — and required, because the type's whole value is the
+ * comparison it enables.
+ */
+function parseOptions(raw: unknown, label: string): readonly string[] {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw new TemplateError(`The field "${label}" needs its printed choices listed.`, "template_no_options");
+  }
+  if (raw.length > MAX_OPTIONS) {
+    throw new TemplateError(`The field "${label}" may list at most ${MAX_OPTIONS} choices.`, "template_too_many_options");
+  }
+
+  const options: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of raw) {
+    if (typeof entry !== "string") {
+      throw new TemplateError(`A choice of "${label}" could not be read.`, "template_bad_option");
+    }
+    // eslint-disable-next-line no-control-regex
+    const option = entry.replace(/[\u0000-\u001F\u007F]/g, "").replace(/\s+/g, " ").trim();
+    if (!option) continue;
+    if (option.length > MAX_OPTION_LENGTH) {
+      throw new TemplateError(`A choice of "${label}" is too long.`, "template_option_too_long");
+    }
+    const key = option.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    options.push(option);
+  }
+
+  if (options.length === 0) {
+    throw new TemplateError(`The field "${label}" needs its printed choices listed.`, "template_no_options");
+  }
+  return options;
+}
+
+/**
+ * A template as stored in the database, validated on the way back out.
+ *
+ * SAME PARSER, DELIBERATELY. A stored template is a second door into the
+ * extractor, and a second parser would be a second thing to keep in sync with
+ * the first — the divergence `drawn.ts` already records once. So this is the
+ * browser path's parser, with the row's own name: whatever wrote the row, the
+ * coordinates that decide where a crop is cut cross the same boundary.
+ */
+export function parseStoredTemplate(raw: unknown, name: string): FormTemplate {
+  if (typeof raw !== "object" || raw === null) {
+    throw new TemplateError("That form's layout could not be read.", "template_invalid");
+  }
+  return parseCustomTemplate({ ...(raw as Record<string, unknown>), name });
 }
 
 function parsePage(raw: unknown): PageSizeMM {

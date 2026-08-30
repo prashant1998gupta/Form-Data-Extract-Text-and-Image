@@ -28,7 +28,7 @@ const outputDir = join(here, "..", "public", "samples");
 const samples: { name: string; options: SyntheticFormOptions }[] = [
   { name: "filled-desk-photo", options: { desk: 110, shadow: 0.28, noise: 0.03 } },
   { name: "filled-photocopy", options: { photocopy: true, monochromePhoto: true, noise: 0.04 } },
-  { name: "unfilled", options: { withPhoto: false, withSignature: false, withThumb: false } },
+  { name: "unfilled", options: { withPhoto: false, withSignature: false, withThumb: false, withHandwriting: false } },
 ];
 
 for (const sample of samples) {

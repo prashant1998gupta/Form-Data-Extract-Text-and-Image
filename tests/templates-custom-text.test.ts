@@ -76,9 +76,41 @@ test("two fields with one label are refused — an ambiguity review cannot resol
 
 test("an unknown answer type is refused, not defaulted", () => {
   assert.throws(
-    () => parseCustomTemplate(withText([{ label: "Name", textType: "dropdown", box: { xMM: 30, yMM: 60, widthMM: 90, heightMM: 8 } }])),
+    () => parseCustomTemplate(withText([{ label: "Name", textType: "sonnet", box: { xMM: 30, yMM: 60, widthMM: 90, heightMM: 8 } }])),
     (error: unknown) => error instanceof TemplateError && error.code === "template_bad_text_type",
   );
+});
+
+test("a choice field without its printed options is refused, not degraded to free text", () => {
+  // The refusal is the feature. A dropdown whose options are unknown reads
+  // every answer as free text while LOOKING like it understood the form, and
+  // cannot flag the one thing that matters — an answer that is not among the
+  // printed choices.
+  assert.throws(
+    () =>
+      parseCustomTemplate(
+        withText([{ label: "Blood Group", textType: "dropdown", box: { xMM: 30, yMM: 60, widthMM: 90, heightMM: 8 } }]),
+      ),
+    (error: unknown) => error instanceof TemplateError && error.code === "template_no_options",
+  );
+});
+
+test("a choice field with options is accepted, deduped and cleaned", () => {
+  const template = parseCustomTemplate(
+    withText([
+      {
+        label: "Blood Group",
+        textType: "dropdown",
+        options: ["A+", " a+ ", "B+", "  ", "O-"],
+        box: { xMM: 30, yMM: 60, widthMM: 90, heightMM: 8 },
+      },
+    ]),
+  );
+  const field = readableFields(template)[0];
+  assert.equal(field.type, "dropdown");
+  // "a+" is the same printed choice as "A+" and must not become a second one;
+  // the blank entry is not a choice at all.
+  assert.deepEqual(field.options, ["A+", "B+", "O-"]);
 });
 
 test("text boxes are clamped to the page like every drawn box", () => {

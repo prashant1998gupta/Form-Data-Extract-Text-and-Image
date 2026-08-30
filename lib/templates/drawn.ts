@@ -27,13 +27,8 @@ import type { PageSizeKey } from "../geometry/frames.ts";
 export type DrawnElement = "photograph" | "signature" | "thumbImpression";
 
 /**
- * The answer shapes a drawn text field can declare.
- *
- * A deliberate subset of `FieldType`: the ones a single drawn box plus a label
- * can honestly describe. Choice fields (dropdown, radio, checkbox) need their
- * options declared, which is builder UI this editor does not have — offering
- * the type without the options would read every choice as free text while
- * looking like it understood the form.
+ * The answer shapes a drawn text field can declare — the free-answer ones,
+ * where a box and a label say everything there is to say.
  */
 export const DRAWN_TEXT_TYPES = [
   "shortText",
@@ -49,6 +44,28 @@ export const DRAWN_TEXT_TYPES = [
 export type DrawnTextType = (typeof DRAWN_TEXT_TYPES)[number];
 
 /**
+ * The CHOICE shapes, which are different in one load-bearing way: they are
+ * only honest with their options declared.
+ *
+ * A choice field whose options are unknown reads every answer as free text
+ * while looking like it understood the form — and worse, it cannot flag the
+ * one thing that matters here, an answer that is not among the printed
+ * choices. So the parser refuses a choice field with no options rather than
+ * quietly degrading it, and the builder collects them.
+ */
+export const DRAWN_CHOICE_TYPES = ["dropdown", "radio", "checkbox"] as const;
+export type DrawnChoiceType = (typeof DRAWN_CHOICE_TYPES)[number];
+
+export type DrawnFieldType = DrawnTextType | DrawnChoiceType;
+
+/** Every answer shape a drawn field may take, for a builder's type picker. */
+export const DRAWN_FIELD_TYPES: readonly DrawnFieldType[] = [...DRAWN_TEXT_TYPES, ...DRAWN_CHOICE_TYPES];
+
+export function isChoiceType(type: string): type is DrawnChoiceType {
+  return (DRAWN_CHOICE_TYPES as readonly string[]).includes(type);
+}
+
+/**
  * A text field taught by drawing: where the answer goes, what the form calls
  * it, and what shape of answer it takes. The label matters beyond display —
  * the reader quotes it to the model to separate printed furniture from the
@@ -56,13 +73,18 @@ export type DrawnTextType = (typeof DRAWN_TEXT_TYPES)[number];
  */
 export interface DrawnTextField {
   readonly label: string;
-  readonly textType: DrawnTextType;
+  readonly textType: DrawnFieldType;
   readonly box: {
     readonly xMM: number;
     readonly yMM: number;
     readonly widthMM: number;
     readonly heightMM: number;
   };
+  /**
+   * The printed choices, for a choice type. Required for those and ignored
+   * for the rest — see `DRAWN_CHOICE_TYPES` for why they are not optional.
+   */
+  readonly options?: readonly string[];
 }
 
 export interface DrawnBox {
