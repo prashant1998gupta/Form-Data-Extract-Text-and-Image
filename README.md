@@ -59,6 +59,20 @@ to end through the pipeline across 0–8 mm of drawing error.** (The tighter
 detector measured on its own; the pipeline figure is the one to quote, and it
 dips to ~0.92 around 2–3 mm.)
 
+**The drawn box is the declared photo size — any size.** A taught template
+never names a photo size, and defaulting that silence to passport 35×45 mm made
+a guess indistinguishable from a declaration: a 56×76 mm hospital print was
+located correctly, edge by edge, then refused as "the wrong size". The box a
+person draws is now the size the detector is told (with a looser window than a
+named size gets, because a finger is a few millimetres out), and the crop is
+delivered at the photograph's own measured shape. **Faint edges are measured,
+not apologised for:** a pale studio backdrop on white paper, with the form's
+printed rule a few millimetres outside it, used to come back as "2 of 4 edges
+could not be measured"; the detector now re-measures a side the strict pass
+could not see, refuses to call a printed rule a boundary while a real one is
+available, and caps the confidence of anything it found that way so it always
+reaches a human.
+
 **Built, behind a key.** Handwritten text extraction for every text field the
 template declares with geometry — the seeded hospital form's eight, and any
 field drawn in the builder: draw a box, name it as the form prints it, pick its
@@ -343,6 +357,16 @@ by strip number — a skipped strip fails that field alone and can never shift
 its neighbours — and every value still lands in front of a human beside its
 own crop. Default: composite on Groq, per-field on Anthropic;
 `FORMLINK_TEXT_MODE` overrides.
+
+**A rate limit is retried, not reported.** A free-tier 429 is a *window*, and
+the first retry usually lands inside it. Every request gets up to three
+attempts (`lib/reader/read-text-fields.ts`, `MAX_ATTEMPTS`), waiting the delay
+the provider named in `retry-after` — up to 15 s per wait — or an exponential
+backoff when it named none, and every wait is clamped to what remains of the
+scan's 40 s budget. Only when the budget genuinely cannot fit another attempt
+does the screen say "the reader is rate limited"; the crops above it are never
+affected either way, and **Read again** re-sends the same capture without
+re-photographing.
 
 **The evidence is the model's own input.** The verify screen shows each value
 beside the crop the model read — byte for byte in per-field mode; in composite

@@ -282,6 +282,25 @@ function parsePage(raw: unknown): PageSizeMM {
   return known;
 }
 
+/**
+ * How far a photograph may measure from the box someone drew round it.
+ *
+ * People over-draw. Asked to trace a 35x45 mm print they produce a box a few
+ * millimetres proud on each side, so the measured photograph is reliably
+ * SMALLER than the declaration — which is why the window is asymmetric rather
+ * than centred on 1. At the 8 mm of drawing error the photo detector's prior
+ * tolerates, a 35 mm print inside a 51 mm box measures 0.69 of its
+ * declaration; the floor sits just under that. The ceiling stays near 1
+ * because drawing INSIDE the photograph is a different mistake and a rarer
+ * one, and leaving room for it would let the detector accept the printed
+ * furniture around a small photo as the photo itself.
+ *
+ * This is a looser check than a named size gets, and deliberately so: a drawn
+ * box cannot support a tight one. It still rejects the failures that matter —
+ * locking onto the whole page, or onto a fragment of it.
+ */
+const DRAWN_PHOTO_SIZE_TOLERANCE = Object.freeze({ min: 0.62, max: 1.25 });
+
 function parseField(raw: unknown, page: PageSizeMM): FormField {
   if (typeof raw !== "object" || raw === null) {
     throw new TemplateError("One of the drawn regions could not be read.", "template_bad_field");
@@ -315,7 +334,17 @@ function parseField(raw: unknown, page: PageSizeMM): FormField {
     // widen its prior accordingly or it will refuse boxes that are perfectly
     // usable.
     origin: "drawn",
-    ...(fieldType === "photograph" ? { photoSize: "passport35x45" as const } : {}),
+    // A drawn photo box declares its own size. It used to declare
+    // `passport35x45` instead, which is a guess and was treated as a fact:
+    // any photograph outside 25-47 mm wide was located correctly and then
+    // refused for not being a passport print. See `photoSizeMM` in
+    // `templates/types.ts` for the whole story.
+    ...(fieldType === "photograph"
+      ? {
+          photoSizeMM: { widthMM: box.widthMM, heightMM: box.heightMM },
+          photoSizeTolerance: DRAWN_PHOTO_SIZE_TOLERANCE,
+        }
+      : {}),
   };
 }
 

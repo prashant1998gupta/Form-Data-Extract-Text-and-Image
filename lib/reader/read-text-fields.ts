@@ -57,6 +57,21 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const SCAN_BUDGET_MS = 40_000;
 /** Below this there is no point contacting a provider at all. */
 const MIN_CALL_MS = 3_000;
+/**
+ * Attempts per request, counting the first. Three, because a rate limit on a
+ * free tier is a WINDOW: the first retry lands inside the same window more
+ * often than not, and the second is the one that gets through. Measured on
+ * the failure that motivated this — one composite request, refused with a
+ * 429, retried once after a 5 s cap, refused again — every field on the
+ * screen read "the reader is rate limited", while the identical scan a moment
+ * later read all of them. Two chances were not enough; the budget below is
+ * what bounds it, not the count.
+ */
+const MAX_ATTEMPTS = 3;
+/** The longest single wait between attempts, whatever the server asked for. */
+const MAX_RETRY_DELAY_MS = 15_000;
+/** The wait when a retryable fault names no delay: doubled per attempt. */
+const BASE_RETRY_DELAY_MS = 2_000;
 
 export interface ReadTextFieldsOptions {
   readonly rectified: Rgb;
@@ -177,7 +192,7 @@ async function readComposite(
 
   let raw: string;
   try {
-    raw = await callWithOneRetry(
+    raw = await callWithRetries(
       provider,
       {
         imageJpegBase64: compositeJpeg.toString("base64"),
@@ -239,7 +254,7 @@ async function readOne(
 
   let raw: string;
   try {
-    raw = await callWithOneRetry(
+    raw = await callWithRetries(
       provider,
       {
         imageJpegBase64: evidenceJpeg.toString("base64"),
@@ -270,23 +285,40 @@ async function readOne(
 }
 
 /**
- * One retry, only for faults the provider marked retryable, after the delay it
- * asked for (capped — the route's own deadline is not negotiable), and only
- * when the scan budget still has room for the delay AND a meaningful attempt.
+ * Up to `MAX_ATTEMPTS` tries, only for faults the provider marked retryable.
+ *
+ * Each wait is the delay the server asked for when it named one, otherwise an
+ * exponential backoff with jitter — and either way capped, then clamped to
+ * what remains of the scan budget, because the route's own deadline is not
+ * negotiable. An attempt is only made when the budget still has room for the
+ * wait AND a meaningful call; when it does not, the last fault is what the
+ * operator reads, so a scan that ran out of time says so instead of
+ * pretending the provider refused it a third time.
+ *
+ * `sleep` is injectable so the tests can prove the schedule without waiting
+ * through it.
  */
-async function callWithOneRetry(
+async function callWithRetries(
   provider: TextProvider,
   request: { imageJpegBase64: string; system: string; prompt: string; timeoutMs: number },
   deadline: number,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 ): Promise<string> {
-  try {
-    return await provider.read(request);
-  } catch (error) {
-    if (!(error instanceof ProviderError) || !error.retryable) throw error;
-    const delay = Math.min(error.retryAfterMs ?? 2_000, 5_000);
-    const remainingAfterDelay = deadline - Date.now() - delay;
-    if (remainingAfterDelay < MIN_CALL_MS) throw error;
-    await new Promise((resolve) => setTimeout(resolve, delay));
-    return provider.read({ ...request, timeoutMs: Math.min(request.timeoutMs, remainingAfterDelay) });
+  let attempt = 0;
+  for (;;) {
+    attempt += 1;
+    const remaining = deadline - Date.now();
+    try {
+      return await provider.read({ ...request, timeoutMs: Math.max(1, Math.min(request.timeoutMs, remaining)) });
+    } catch (error) {
+      if (!(error instanceof ProviderError) || !error.retryable) throw error;
+      if (attempt >= MAX_ATTEMPTS) throw error;
+
+      const backoff = BASE_RETRY_DELAY_MS * 2 ** (attempt - 1) * (0.75 + Math.random() * 0.5);
+      const delay = Math.min(error.retryAfterMs ?? backoff, MAX_RETRY_DELAY_MS);
+      const remainingAfterDelay = deadline - Date.now() - delay;
+      if (remainingAfterDelay < MIN_CALL_MS) throw error;
+      await sleep(delay);
+    }
   }
 }

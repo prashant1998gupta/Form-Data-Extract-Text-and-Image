@@ -141,9 +141,18 @@ function statusMessage(status: number): string {
   return `the reader refused the request (HTTP ${status})`;
 }
 
+/**
+ * How long the server asked us to wait, when it said.
+ *
+ * Groq's free tier answers a burst with `retry-after` values of 2-20 s, and
+ * the earlier 10 s cap here silently turned "wait 14 s" into "wait 10 s" — a
+ * retry guaranteed to hit the same limit. The cap is now generous; the
+ * orchestrator clamps every wait to what remains of the scan budget, which is
+ * the bound that actually matters.
+ */
 function retryAfterMs(response: Response): number | undefined {
   const header = response.headers.get("retry-after");
   if (!header) return undefined;
   const seconds = Number(header);
-  return Number.isFinite(seconds) && seconds >= 0 ? Math.min(seconds, 10) * 1000 : undefined;
+  return Number.isFinite(seconds) && seconds >= 0 ? Math.min(seconds, 30) * 1000 : undefined;
 }

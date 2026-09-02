@@ -43,7 +43,10 @@ import { DRAWN_TEXT_TYPES, type DrawnBox, type DrawnElement, type DrawnTemplate,
 export type { DrawnTemplate };
 
 const ELEMENTS = [
-  { type: "photograph", label: "Photograph", hint: "the pasted passport photo" },
+  // Not "passport photo": the box's own size is the size the detector is told,
+  // so a 60 mm print is as welcome as a 35 mm one — what matters is drawing
+  // close around whatever is there.
+  { type: "photograph", label: "Photograph", hint: "the pasted photo, any size — draw close around it" },
   { type: "signature", label: "Signature", hint: "where the person signs" },
   { type: "thumbImpression", label: "Thumb", hint: "the inked thumb box" },
 ] as const;

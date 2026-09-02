@@ -49,6 +49,28 @@ export interface SyntheticFormOptions {
   readonly monochromePhoto?: boolean;
   /** Rotate the pasted photo, as a hand-glued one always is. Degrees. */
   readonly photoRotation?: number;
+  /**
+   * Size of the pasted photo relative to a 35x45 mm passport print.
+   *
+   * Real forms are not all passport forms. Hospital and school forms
+   * routinely carry a 50-60 mm print, and a template taught by DRAWING never
+   * states a size at all — the person just drags a box round whatever is
+   * there. So the generator has to be able to produce a photo that is
+   * plainly a photo and plainly not 35x45.
+   */
+  readonly photoScale?: number;
+  /**
+   * The studio backdrop the portrait was shot against.
+   *
+   * `studio` is the mid-grey the generator has always drawn: a ~75-level step
+   * against paper, which every channel sees easily. `pale` is the photograph
+   * `regions/photo.ts` opens by naming as the single most common real input —
+   * a person on a near-white backdrop, printed on white photo paper, pasted
+   * onto white form paper. Its boundary is a handful of grey levels, and on a
+   * real print the backdrop is lightest at the bottom corners, so the bottom
+   * and one side are the edges that vanish first.
+   */
+  readonly photoBackdrop?: "studio" | "pale";
   /** Illumination gradient strength, 0..1. */
   readonly shadow?: number;
   /** A blown-out specular hotspot. */
@@ -117,6 +139,8 @@ export function renderSyntheticForm(options: SyntheticFormOptions = {}): Synthet
     withThumb = true,
     monochromePhoto = false,
     photoRotation = 0,
+    photoScale = 1,
+    photoBackdrop = "studio",
     shadow = 0,
     glare = false,
     photocopy = false,
@@ -160,7 +184,7 @@ export function renderSyntheticForm(options: SyntheticFormOptions = {}): Synthet
   // ---- the pasted photograph box, top right ----
   // 35x45mm at 150 DPI is 207x266 px; scale with the page so the generator
   // works at any resolution.
-  const photoWidth = Math.round(page.width * 0.167);
+  const photoWidth = Math.round(page.width * 0.167 * photoScale);
   const photoHeight = Math.round(photoWidth * (45 / 35));
   const photoBox: Rect = { x: right - photoWidth, y, width: photoWidth, height: photoHeight };
 
@@ -184,7 +208,7 @@ export function renderSyntheticForm(options: SyntheticFormOptions = {}): Synthet
       width: photoBox.width - inset * 2,
       height: photoBox.height - inset * 2,
     };
-    drawPortrait(canvas, placed, random, monochromePhoto, photoRotation);
+    drawPortrait(canvas, placed, random, monochromePhoto, photoRotation, photoBackdrop);
     photoTruth = placed;
   }
 
@@ -536,7 +560,14 @@ function drawThumbprint(canvas: Canvas, box: Rect, random: () => number): Rect {
  * form, which is the case where colour-based detection has to fail over to
  * variance and edge cues.
  */
-function drawPortrait(canvas: Canvas, rect: Rect, random: () => number, monochrome: boolean, rotationDegrees: number) {
+function drawPortrait(
+  canvas: Canvas,
+  rect: Rect,
+  random: () => number,
+  monochrome: boolean,
+  rotationDegrees: number,
+  backdrop: "studio" | "pale" = "studio",
+) {
   const radians = (rotationDegrees * Math.PI) / 180;
   const cos = Math.cos(radians);
   const sin = Math.sin(radians);
@@ -562,7 +593,16 @@ function drawPortrait(canvas: Canvas, rect: Rect, random: () => number, monochro
       const v = ly / rect.height;
 
       // Studio backdrop: a soft vertical gradient, never pure white.
-      let colour: RGB = [172 - v * 26, 178 - v * 24, 186 - v * 20];
+      //
+      // The pale variant runs the gradient the other way — lightest at the
+      // bottom, as a lit backdrop falls off — so the bottom edge and the
+      // lower half of each side sit within a few grey levels of the paper
+      // around them. That is not a contrived worst case; it is what a
+      // high-street studio print looks like on a white form.
+      let colour: RGB =
+        backdrop === "pale"
+          ? [230 + v * 8, 233 + v * 7, 238 + v * 6]
+          : [172 - v * 26, 178 - v * 24, 186 - v * 20];
 
       // Head: an ellipse in the upper middle.
       const headX = (u - 0.5) / 0.30;

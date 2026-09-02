@@ -97,8 +97,39 @@ export interface FormField {
   readonly printedBorder?: RectMM;
   /** For signature fields: the y of the printed rule, in millimetres. */
   readonly baselineMM?: number;
-  /** For photograph fields: the declared physical size. Never guessed. */
+  /** For photograph fields: the declared physical size, named from a fixed list. */
   readonly photoSize?: PhotoSizeKey;
+  /**
+   * For photograph fields: the declared physical size stated directly, in
+   * millimetres. Takes precedence over `photoSize`.
+   *
+   * WHY THIS EXISTS. `photoSize` names a size from a list of three, and a
+   * template taught by DRAWING never names one — the person drags a box round
+   * whatever photograph is on their form and presses save. Defaulting that
+   * silence to `passport35x45` is not a declaration, it is a guess, and the
+   * detector treats it as a declaration: it measures the quadrilateral it
+   * found against 35x45 mm within a 0.72-1.35 window. A hospital form
+   * carrying a 56x76 mm print scores 1.6 there, so a photograph the detector
+   * had located correctly, edge by edge, was thrown away for being the wrong
+   * size and reported to the operator as "Not Detected".
+   *
+   * The box the person drew IS the declaration — the only one a drawn
+   * template has. It is accurate to the few millimetres a finger carries
+   * rather than to a fraction of one, which is why `photoSizeTolerance`
+   * travels with it.
+   */
+  readonly photoSizeMM?: { readonly widthMM: number; readonly heightMM: number };
+  /**
+   * How loosely `photoSizeMM` should be believed: the accepted ratio of
+   * measured size to declared size.
+   *
+   * A named size is a fact about the paper and is held to a tight window. A
+   * size inferred from a dragged box is only ever "about this big", and a
+   * window tight enough for the first refuses most of the second. Stated per
+   * field rather than inferred from `origin` so the trade is visible where
+   * the declaration is made.
+   */
+  readonly photoSizeTolerance?: { readonly min: number; readonly max: number };
   /** Free-text hint shown to staff on the verify screen. */
   readonly hint?: string;
   /**

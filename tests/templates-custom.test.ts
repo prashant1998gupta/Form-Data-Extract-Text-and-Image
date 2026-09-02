@@ -52,11 +52,28 @@ test("every drawn field is marked as drawn, not registered", () => {
   }
 });
 
-test("a photograph field carries a declared physical size", () => {
+test("a drawn photograph field declares the size of the box that was drawn", () => {
+  // NOT `photoSize: "passport35x45"`, which is what this used to assert. A
+  // drawn template names no size, and filling that silence with the commonest
+  // one made a guess indistinguishable from a declaration: every photograph
+  // outside 25-47 mm wide was located correctly by the detector and then
+  // refused for not being a passport print.
   const template = parseCustomTemplate(valid());
   const photo = allFields(template).find((f) => f.type === "photograph");
   assert.ok(photo);
-  assert.equal(photo.photoSize, "passport35x45");
+  assert.equal(photo.photoSize, undefined);
+  assert.deepEqual(photo.photoSizeMM, { widthMM: 35, heightMM: 45 });
+  // And the looser window that a dragged box, unlike a named size, requires.
+  assert.ok(photo.photoSizeTolerance);
+  assert.ok(photo.photoSizeTolerance.min < 0.72);
+});
+
+test("a photograph box drawn round a larger print declares that larger size", () => {
+  const source = valid();
+  source.fields[0] = { type: "photograph", box: { xMM: 140, yMM: 20, widthMM: 58, heightMM: 76 } };
+  const photo = allFields(parseCustomTemplate(source)).find((f) => f.type === "photograph");
+  assert.ok(photo);
+  assert.deepEqual(photo.photoSizeMM, { widthMM: 58, heightMM: 76 });
 });
 
 // ---------------------------------------------------------------------------

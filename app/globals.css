@@ -169,6 +169,13 @@ h3 {
   border-color: var(--line-strong);
   box-shadow: none;
 }
+/* Inline inside a notice: the "Read again" after a reader fault. */
+.button.small {
+  min-height: 30px;
+  padding: 0 12px;
+  font-size: 13px;
+  vertical-align: middle;
+}
 .button[disabled] {
   background: var(--surface-2);
   color: var(--muted);

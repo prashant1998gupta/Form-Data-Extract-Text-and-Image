@@ -67,8 +67,18 @@ export interface PhotoDetectionInput {
   readonly paper: PaperStatistics;
   /** Expected photo box, in working pixels, from the registered template. */
   readonly expected: Rect;
-  /** Declared physical size. Chosen by the admin at template build time, never guessed. */
+  /**
+   * Declared physical size. Chosen by the admin at template build time, or
+   * taken from the box a person drew — never guessed by this file.
+   */
   readonly sizeMM: { readonly widthMM: number; readonly heightMM: number };
+  /**
+   * Accepted ratio of measured size to declared size. Defaults to the window
+   * for a NAMED size, which is tight because a named size is a fact about the
+   * paper. A size inferred from a dragged box arrives with its own, looser
+   * window — see `photoSizeTolerance` in `templates/types.ts`.
+   */
+  readonly sizeTolerance?: { readonly min: number; readonly max: number };
   /** Working-image pixels per millimetre of paper. */
   readonly pxPerMM: number;
   /** The pre-printed "Affix Photo" rectangle, if the template records one. */
@@ -99,6 +109,12 @@ export interface EdgeReport {
   readonly responseSigma: number;
   /** Set when a second, parallel candidate existed and the inner one was chosen. */
   readonly preferredInner?: boolean;
+  /**
+   * Set when the strict candidate floor found nothing and this edge was
+   * measured on the relaxed pass instead. The measurement is real; it is
+   * weaker, and the detection's confidence is capped because of it.
+   */
+  readonly relaxed?: boolean;
 }
 
 export interface PhotoContentScores {
@@ -122,6 +138,8 @@ export type PhotoDetection =
       readonly confidence: number;
       readonly edges: readonly EdgeReport[];
       readonly greyscale: boolean;
+      /** Sides that only the relaxed pass could measure. Empty on a clean detection. */
+      readonly faintEdges: readonly EdgeSide[];
     }
   | {
       readonly found: false;
@@ -163,36 +181,114 @@ export function detectPhoto(input: PhotoDetectionInput): PhotoDetection {
 
   const sides: EdgeSide[] = ["left", "top", "right", "bottom"];
   const fits: Partial<Record<EdgeSide, LineFit>> = {};
-  const reports: EdgeReport[] = [];
+  const reports = new Map<EdgeSide, EdgeReport>();
 
-  for (const side of sides) {
+  /**
+   * Measures one edge at a given candidate floor. The outermost qualifying
+   * step is the object's boundary; anything further in is its content.
+   */
+  const measure = (side: EdgeSide, floorSigma: number, relaxed: boolean): EdgeResult | null => {
     const band = bandFor(expected, side, bandPx);
-    // The outermost qualifying step is the object's boundary; anything further
-    // in is its content. The floor is a comfortable multiple of the acceptance
-    // threshold so paper grain can never qualify, while a genuine paper-to-photo
-    // transition — even a low-contrast one — always does.
     const samples = edgeStepProfile(channels, side, band, windowPx, {
-      minResponse: P.minResponseSigma * 2.5,
+      minResponse: floorSigma,
       sustainWindow: sustainPx,
       peaksPerLine: 3,
+      thinOutsideRatio: P.thinOutsideRatio,
+      // The per-scanline relative floor keeps paper grain out of the candidate
+      // set on a clean edge, and on a faint one it does the opposite: a
+      // boundary at 12 sigma is discarded on every scanline that also crosses
+      // a 190-sigma hairline, because 12 is under 15 % of 190. Measured on the
+      // pale-backdrop fixture, that left the right edge with candidates only
+      // on the scanlines above the head. The relaxed pass is for edges the
+      // strict one could not see, so here the absolute floor governs alone.
+      ...(relaxed ? { outermostFraction: 0 } : {}),
     });
-    const result = fitEdge(samples, side, tolerancePx, input, expected);
+    return fitEdge(
+      samples,
+      side,
+      relaxed ? tolerancePx * P.relaxedToleranceMultiplier : tolerancePx,
+      input,
+      expected,
+      relaxed,
+    );
+  };
 
+  const record = (side: EdgeSide, result: EdgeResult | null, relaxed: boolean) => {
     if (!result) {
-      reports.push({ side, fitted: false, inlierRatio: 0, responseSigma: 0 });
-      continue;
+      reports.set(side, { side, fitted: false, inlierRatio: 0, responseSigma: 0 });
+      delete fits[side];
+      return;
     }
     fits[side] = result.fit;
-    reports.push({
+    reports.set(side, {
       side,
       fitted: true,
       inlierRatio: result.fit.inlierRatio,
       responseSigma: result.fit.meanResponse,
       preferredInner: result.preferredInner,
+      ...(relaxed ? { relaxed: true } : {}),
     });
+  };
+
+  // STRICT PASS. The floor is a comfortable multiple of the acceptance
+  // threshold so paper grain can never qualify. On a page where every boundary
+  // is unmistakable — the common case — this is the only pass that runs, and
+  // its answers are the confident ones.
+  const strict = new Map<EdgeSide, EdgeResult | null>();
+  for (const side of sides) {
+    const result = measure(side, P.minResponseSigma * P.strictResponseMultiplier, false);
+    strict.set(side, result);
+    record(side, result, false);
   }
 
-  const unfitted = reports.filter((r) => !r.fitted);
+  // RELAXED PASS, for the sides the strict floor could not see.
+  //
+  // WHAT THIS IS NOT: it is not the prior. No template edge is substituted for
+  // a measured one anywhere in this file, and that is not softened here. The
+  // relaxed pass measures the same pixels of the same band against the floor
+  // `acceptable()` has always claimed to apply, `minResponseSigma`. Until now
+  // that floor was unreachable, because nothing below 7.5 sigma was ever
+  // offered to it: an edge between 3 and 7.5 sigma was not scored badly, it was
+  // never generated. A pale studio backdrop on white photo paper pasted onto
+  // white form paper — the input this file opens by naming as the most common
+  // one there is — steps by a handful of grey levels on the side where the
+  // backdrop is lightest. That edge came back "could not be measured" and took
+  // the whole detection with it, over a photograph plainly present on the page.
+  //
+  // It also runs for a side the strict pass fitted to a PRINTED LINE — a line
+  // whose inliers are rule-like steps (`StepSample.thin`). A rule is not a
+  // boundary, and accepting it as one because it was the strongest straight
+  // thing in the band is the classic failure this file exists to avoid. The
+  // relaxed pass looks for a real boundary there; if it finds one that is not
+  // itself rule-like, that wins. If it finds nothing better, the printed line
+  // stands — because on an EMPTY box the border is the only line there is,
+  // and fitting it is how the box gets reported empty rather than shrugged at.
+  //
+  // The pass is skipped when NOTHING was measurable, because four faint edges
+  // in a row is not a photograph seen dimly. It is a region with no object in
+  // it, and searching harder there is how a detector talks itself into finding
+  // one.
+  const ruleLike = (result: EdgeResult | null) => result !== null && result.thinFraction > P.ruleLikeFraction;
+  const strictFitted = sides.filter((side) => reports.get(side)!.fitted);
+  const wanting = sides.filter((side) => !reports.get(side)!.fitted || ruleLike(strict.get(side)!));
+  if (strictFitted.length > 0 && wanting.length > 0 && wanting.length < sides.length) {
+    for (const side of wanting) {
+      const relaxedResult = measure(side, P.minResponseSigma, true);
+      const strictResult = strict.get(side)!;
+      if (relaxedResult && !ruleLike(relaxedResult)) {
+        record(side, relaxedResult, true);
+      } else if (strictResult) {
+        // Nothing better: the printed line stands, as measured by the strict pass.
+        record(side, strictResult, false);
+      } else {
+        record(side, relaxedResult, true);
+      }
+    }
+  }
+
+  const ordered = sides.map((side) => reports.get(side)!);
+  const faintEdges = ordered.filter((r) => r.fitted && r.relaxed).map((r) => r.side);
+  const unfitted = ordered.filter((r) => !r.fitted);
   if (unfitted.length > 0) {
     // An edge that could not be measured is NOT replaced by the template's own
     // edge. Substituting the prior here is exactly how a detector starts
@@ -219,18 +315,46 @@ export function detectPhoto(input: PhotoDetectionInput): PhotoDetection {
       reason: "below_threshold",
       failedClause: "boundary",
       detail: `${unfitted.length} of 4 edges could not be measured (${unfitted.map((r) => r.side).join(", ")}), so nothing can be said about whether this box is empty`,
-      edges: reports,
+      edges: ordered,
     };
   }
 
-  const quad = intersectLinesToQuad(fits.left!.line, fits.top!.line, fits.right!.line, fits.bottom!.line);
+  let quad = intersectLinesToQuad(fits.left!.line, fits.top!.line, fits.right!.line, fits.bottom!.line);
+
+  // A photograph is a rectangle, so its four edges share one angle. Four lines
+  // fitted independently do not know that, and on the side where the boundary
+  // was faintest the best available line is sometimes a strong interior
+  // contour running a few degrees off true. That single line skews the whole
+  // quadrilateral: measured on the pale-backdrop fixture it produced a
+  // rectangularity of 0.79 against a 0.80 floor, so a photograph whose four
+  // edges had all been located was refused for not being rectangular.
+  //
+  // Only tried when the measured quad actually fails, so the rectangularity
+  // gate keeps its full meaning on every scan that never needed this.
+  //
+  // Also tried when the edges visibly disagree about the angle even though the
+  // quad still clears the rectangularity floor: a trapezoid with one side 8
+  // degrees off passes 0.8 comfortably, and warping it upright stretches the
+  // portrait.
+  let squaredUp = false;
+  if (quad) {
+    const rectangular = polygonArea(quadPoints(quad)) / Math.max(1, rectArea(quad)) >= P.minRectangularity;
+    if (!rectangular || edgeAngleSpread(fits as Record<EdgeSide, LineFit>) > P.consistentEdgeSpreadDegrees) {
+      const squared = squareUpEdges(fits as Record<EdgeSide, LineFit>, expected);
+      if (squared) {
+        quad = squared;
+        squaredUp = true;
+      }
+    }
+  }
+
   if (!quad) {
     return {
       found: false,
       reason: "below_threshold",
       failedClause: "boundary",
       detail: "the fitted edges do not intersect into a quadrilateral",
-      edges: reports,
+      edges: ordered,
     };
   }
 
@@ -251,7 +375,7 @@ export function detectPhoto(input: PhotoDetectionInput): PhotoDetection {
       detail: emptiness.empty
         ? "the photo box was located and is empty"
         : `content score ${content.total.toFixed(2)} is below the ${threshold} threshold`,
-      edges: reports,
+      edges: ordered,
       suggestion: quad,
       content,
     };
@@ -265,7 +389,7 @@ export function detectPhoto(input: PhotoDetectionInput): PhotoDetection {
       reason: "below_threshold",
       failedClause: "boundary",
       detail: `the outline is not rectangular enough (${content.rectangularity.toFixed(2)})`,
-      edges: reports,
+      edges: ordered,
       suggestion: quad,
       content,
     };
@@ -278,8 +402,8 @@ export function detectPhoto(input: PhotoDetectionInput): PhotoDetection {
       failedClause: "boundary",
       detail:
         `measured ${(measured.width / pxPerMM).toFixed(1)}x${(measured.height / pxPerMM).toFixed(1)} mm, ` +
-        `expected ${sizeMM.widthMM}x${sizeMM.heightMM} mm`,
-      edges: reports,
+        `expected ${sizeMM.widthMM.toFixed(0)}x${sizeMM.heightMM.toFixed(0)} mm`,
+      edges: ordered,
       suggestion: quad,
       content,
     };
@@ -292,11 +416,14 @@ export function detectPhoto(input: PhotoDetectionInput): PhotoDetection {
   // come from independent feature families. A candidate strong on one and weak
   // on the other is exactly the ambiguous case that should not read as certain.
   const boundaryStrength =
-    reports.reduce((sum, r) => sum + Math.min(1, r.responseSigma / 8) * Math.min(1, r.inlierRatio / 0.85), 0) / 4;
+    ordered.reduce((sum, r) => sum + Math.min(1, r.responseSigma / 8) * Math.min(1, r.inlierRatio / 0.85), 0) / 4;
   let confidence = 0.45 * boundaryStrength + 0.55 * Math.min(1, content.total);
   if (greyscale) confidence = Math.min(confidence, P.greyscaleConfidenceCap);
+  // A boundary measured at 4 sigma is a real measurement, and a weaker one than
+  // a boundary measured at 40. The crop is offered; the certainty is not.
+  if (faintEdges.length > 0 || squaredUp) confidence = Math.min(confidence, P.faintEdgeConfidenceCap);
 
-  return { found: true, quad, rotationDegrees, content, confidence, edges: reports, greyscale };
+  return { found: true, quad, rotationDegrees, content, confidence, edges: ordered, greyscale, faintEdges };
 }
 
 // ---------------------------------------------------------------------------
@@ -306,6 +433,8 @@ export function detectPhoto(input: PhotoDetectionInput): PhotoDetection {
 interface EdgeResult {
   readonly fit: LineFit;
   readonly preferredInner?: boolean;
+  /** Fraction of the chosen line's inliers that were rule-like steps. */
+  readonly thinFraction: number;
 }
 
 /**
@@ -328,6 +457,7 @@ function fitEdge(
   tolerancePx: number,
   input: PhotoDetectionInput,
   expected: Rect,
+  relaxed = false,
 ): EdgeResult | null {
   // Support is measured against the number of SCANLINES, not the number of
   // samples. With three candidate peaks emitted per scanline, an edge that
@@ -338,9 +468,18 @@ function fitEdge(
   const scanlines = countScanlines(samples, side);
   if (scanlines < 8) return null;
 
-  const candidates = fitLineCandidates(samples, tolerancePx, 3, P.ransacIterations, 1)
+  // The orientation goes INTO the fit. A "left edge" at 40 degrees is a fit
+  // through noise and one at 18 degrees is the outline of a head; either can
+  // out-support the real edge on inlier count alone, and letting it win a
+  // candidate slot only to be refused below meant the real edge was never
+  // fitted at all. See the note in `ransacLineFit`.
+  const orientation = {
+    angleDegrees: side === "left" || side === "right" ? 90 : 0,
+    maxDeviationDegrees: P.maxEdgeAngleDegrees,
+  };
+  const candidates = fitLineCandidates(samples, tolerancePx, 3, P.ransacIterations, 1, orientation)
     .map((fit) => ({ ...fit, inlierRatio: Math.min(1, fit.inliers / scanlines) }))
-    .filter((fit) => acceptable(fit, side));
+    .filter((fit) => acceptable(fit, side, relaxed));
   if (candidates.length === 0) return null;
 
   // Where registration says this edge should be, and how far it might be out.
@@ -357,11 +496,19 @@ function fitEdge(
   // without ever letting the prior override a well-measured edge — a strong fit
   // 1 mm away still beats a strong fit 4 mm away, but a WEAK fit near the prior
   // does not beat a strong one slightly further off.
+  //
+  // And a fourth term: how much of the line is built from steps that behave
+  // like a printed rule rather than a boundary (`StepSample.thin`). A rule
+  // beside a photo is seen by every scanline, so on support alone it beats a
+  // faint real edge — the penalty is what lets the edge win. It is a penalty
+  // and not a veto so that on an EMPTY box the border can still be fitted and
+  // the box then confidently reported empty; see `thinCandidatePenalty`.
   const scored = candidates.map((fit) => {
     const offset = Math.abs(distance(fit.line, anchor));
     const agreement = Math.exp(-0.5 * (offset / priorSigmaPx) ** 2);
     const strength = Math.min(1, fit.meanResponse / (P.minResponseSigma * 4));
-    return { fit, score: fit.inlierRatio * strength * agreement, offset };
+    const ruleLike = 1 - P.thinCandidatePenalty * thinFraction(fit.line, samples, tolerancePx);
+    return { fit, score: fit.inlierRatio * strength * agreement * ruleLike, offset };
   });
   scored.sort((a, b) => b.score - a.score);
 
@@ -383,10 +530,11 @@ function fitEdge(
   // border is, and requires the current best candidate to be sitting on it.
   // With no declared border there is no ambiguity to resolve, and the
   // prior-weighted score above is already the right answer.
-  if (!input.printedBorder) return { fit: best.fit };
+  const bestThin = thinFraction(best.fit.line, samples, tolerancePx);
+  if (!input.printedBorder) return { fit: best.fit, thinFraction: bestThin };
 
   const bestOnBorder = distanceToRectEdge(input.printedBorder, side, best.fit.line);
-  if (bestOnBorder > P.printedBorderMM * input.pxPerMM) return { fit: best.fit };
+  if (bestOnBorder > P.printedBorderMM * input.pxPerMM) return { fit: best.fit, thinFraction: bestThin };
 
   const separationPx = P.parallelCandidateMM * input.pxPerMM;
   const centre = { x: expected.x + expected.width / 2, y: expected.y + expected.height / 2 };
@@ -400,10 +548,23 @@ function fitEdge(
     if (otherDepth >= bestDepth || bestDepth - otherDepth > separationPx) continue;
     // The border candidate keeps the edge only if it is decisively stronger.
     if (best.fit.meanResponse >= other.fit.meanResponse * P.printedBorderMargin) continue;
-    return { fit: other.fit, preferredInner: true };
+    return { fit: other.fit, preferredInner: true, thinFraction: thinFraction(other.fit.line, samples, tolerancePx) };
   }
 
-  return { fit: best.fit };
+  return { fit: best.fit, thinFraction: bestThin };
+}
+
+/** The fraction of a line's inliers that were marked as rule-like steps. */
+function thinFraction(line: Line, samples: readonly StepSample[], tolerancePx: number): number {
+  const norm = Math.hypot(line.a, line.b) || 1;
+  let inliers = 0;
+  let thin = 0;
+  for (const sample of samples) {
+    if (Math.abs(distance(line, sample.point)) / norm > tolerancePx) continue;
+    inliers += 1;
+    if (sample.thin) thin += 1;
+  }
+  return inliers === 0 ? 0 : thin / inliers;
 }
 
 /** Distinct scanline positions represented in a sample set. */
@@ -457,14 +618,18 @@ function expectedEdgePoint(expected: Rect, side: EdgeSide): { x: number; y: numb
  * measurement too weak to believe to be believed because it landed where we
  * expected. That is the failure mode this whole design exists to avoid.
  */
-function acceptable(fit: LineFit, side: EdgeSide): boolean {
-  if (fit.inlierRatio < P.minInlierRatioFloor) return false;
+function acceptable(fit: LineFit, side: EdgeSide, relaxed = false): boolean {
+  // On the relaxed pass the support floor drops but `minEdgeEvidence` below
+  // does not, so the missing support has to be paid for in step strength. See
+  // `relaxedInlierRatioFloor` in params.ts for the measurement behind it.
+  if (fit.inlierRatio < (relaxed ? P.relaxedInlierRatioFloor : P.minInlierRatioFloor)) return false;
   if (fit.meanResponse < P.minResponseSigma) return false;
 
-  // A "left edge" returned at 40 degrees is a fit through noise, not an edge.
-  // Photos are pasted crooked but never diagonally.
+  // A "left edge" returned at 40 degrees is a fit through noise, not an edge —
+  // and one at 18 degrees is the outline of a head. Photos are pasted crooked
+  // but never diagonally; see `maxEdgeAngleDegrees`.
   const expectedAngle = side === "left" || side === "right" ? 90 : 0;
-  if (angleDifference(lineAngleDegrees(fit.line), expectedAngle) > 20) return false;
+  if (angleDifference(lineAngleDegrees(fit.line), expectedAngle) > P.maxEdgeAngleDegrees) return false;
 
   const strength = Math.min(1, fit.meanResponse / (P.minResponseSigma * 3));
   return fit.inlierRatio * strength >= P.minEdgeEvidence;
@@ -527,6 +692,7 @@ function bandFor(expected: Rect, side: EdgeSide, bandPx: number): Rect {
 
 function scoreContent(quad: Quad, input: PhotoDetectionInput, greyscale: boolean): PhotoContentScores {
   const { lab, texture, paper, sizeMM, pxPerMM } = input;
+  const sizeRange = input.sizeTolerance ?? P.sizeFitRange;
   const bounds = boundsOf(quadPoints(quad));
   const rotated = minAreaRect(quadPoints(quad));
 
@@ -549,11 +715,14 @@ function scoreContent(quad: Quad, input: PhotoDetectionInput, greyscale: boolean
   const shortRatio = measuredWidthMM / expectedShort;
   const longRatio = measuredHeightMM / expectedLong;
   const sizeFit =
-    shortRatio >= P.sizeFitRange.min &&
-    shortRatio <= P.sizeFitRange.max &&
-    longRatio >= P.sizeFitRange.min &&
-    longRatio <= P.sizeFitRange.max
-      ? 1 - Math.min(1, (Math.abs(1 - shortRatio) + Math.abs(1 - longRatio)) / 0.6)
+    shortRatio >= sizeRange.min &&
+    shortRatio <= sizeRange.max &&
+    longRatio >= sizeRange.min &&
+    longRatio <= sizeRange.max
+      ? // Scored against the width of the window it was admitted through, so a
+        // drawn declaration's deliberate looseness does not also flatten every
+        // candidate's score to zero and take the whole content total with it.
+        1 - Math.min(1, (Math.abs(1 - shortRatio) + Math.abs(1 - longRatio)) / (sizeRange.max - sizeRange.min))
       : 0;
 
   const measuredAspect = measuredWidthMM / Math.max(1e-6, measuredHeightMM);
@@ -637,6 +806,88 @@ function assessEmptiness(input: PhotoDetectionInput): {
   // the signal that printed placeholder text trips.
   const empty = coverage < P.emptyCoverageFraction && spread < P.emptyToneSpread;
   return { empty, coverage, spread, ink };
+}
+
+/**
+ * Re-lays four fitted edges on the single angle they collectively measured.
+ *
+ * WHAT MOVES AND WHAT DOES NOT. Only each line's DIRECTION is changed. Its
+ * distance from the page origin along its new normal is set so that it still
+ * passes through the point where the ORIGINAL fit crossed the middle of that
+ * edge — so the offset every line was measured at survives untouched, and the
+ * prior contributes nothing but the choice of pivot point along a line it did
+ * not place. The template's own edge is never substituted for a measured one,
+ * here or anywhere else in this file.
+ *
+ * Returns null when the four edges disagree about the angle by more than
+ * `maxEdgeAngleSpreadDegrees`, because at that point they are not four sides
+ * of one rectangle and forcing them into one would invent the answer.
+ */
+function squareUpEdges(fits: Record<EdgeSide, LineFit>, expected: Rect): Quad | null {
+  const sides: EdgeSide[] = ["left", "top", "right", "bottom"];
+
+  /** Each side's opinion of the paste angle, as a rotation in (-90, 90]. */
+  const opinions = sides.map((side) => {
+    const nominal = side === "left" || side === "right" ? 90 : 0;
+    let delta = lineAngleDegrees(fits[side].line) - nominal;
+    while (delta <= -90) delta += 180;
+    while (delta > 90) delta -= 180;
+    const fit = fits[side];
+    const weight = fit.inlierRatio * Math.min(1, fit.meanResponse / (P.minResponseSigma * 4));
+    return { side, delta, weight };
+  });
+
+  // Anchor on the best-evidenced edge rather than on a mean, which a single
+  // wild line drags with it — that line is exactly what this exists to correct.
+  const anchor = opinions.reduce((best, o) => (o.weight > best.weight ? o : best));
+  const agreeing = opinions.filter((o) => Math.abs(o.delta - anchor.delta) <= P.maxEdgeAngleSpreadDegrees);
+  // Two adjacent sides are the least that can establish a rectangle's angle
+  // from more than one measurement.
+  if (agreeing.length < 2) return null;
+
+  const totalWeight = agreeing.reduce((sum, o) => sum + o.weight, 0);
+  if (!(totalWeight > 0)) return null;
+  const consensus = agreeing.reduce((sum, o) => sum + o.delta * o.weight, 0) / totalWeight;
+
+  const rebuilt = {} as Record<EdgeSide, Line>;
+  for (const side of sides) {
+    const nominal = side === "left" || side === "right" ? 90 : 0;
+    const phi = ((nominal + consensus) * Math.PI) / 180;
+    // lineAngleDegrees is atan2(-a, b), so a direction of phi has this normal.
+    const a = -Math.sin(phi);
+    const b = Math.cos(phi);
+
+    const original = fits[side].line;
+    const norm = Math.hypot(original.a, original.b) || 1;
+    const unit = { a: original.a / norm, b: original.b / norm, c: original.c / norm };
+    // The pivot: where the measured line crosses the middle of this edge.
+    const mid = expectedEdgePoint(expected, side);
+    const signed = unit.a * mid.x + unit.b * mid.y + unit.c;
+    const pivot = { x: mid.x - signed * unit.a, y: mid.y - signed * unit.b };
+
+    rebuilt[side] = { a, b, c: -(a * pivot.x + b * pivot.y) };
+  }
+
+  return intersectLinesToQuad(rebuilt.left, rebuilt.top, rebuilt.right, rebuilt.bottom);
+}
+
+/** The largest disagreement, in degrees, between any two edges' opinions of the paste angle. */
+function edgeAngleSpread(fits: Record<EdgeSide, LineFit>): number {
+  const sides: EdgeSide[] = ["left", "top", "right", "bottom"];
+  const deltas = sides.map((side) => {
+    const nominal = side === "left" || side === "right" ? 90 : 0;
+    let delta = lineAngleDegrees(fits[side].line) - nominal;
+    while (delta <= -90) delta += 180;
+    while (delta > 90) delta -= 180;
+    return delta;
+  });
+  return Math.max(...deltas) - Math.min(...deltas);
+}
+
+/** Area of the minimum-area rectangle enclosing a quad. */
+function rectArea(quad: Quad): number {
+  const rect = minAreaRect(quadPoints(quad));
+  return rect.width * rect.height;
 }
 
 function polygonArea(points: readonly { x: number; y: number }[]): number {

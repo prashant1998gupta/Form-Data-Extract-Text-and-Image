@@ -93,6 +93,100 @@ export const REGION_PARAMS = Object.freeze({
     /** Hard floor on step strength, in paper-sigma. Below this it is noise. */
     minResponseSigma: 3,
     /**
+     * Multiple of `minResponseSigma` a candidate step must clear on the FIRST
+     * pass over an edge.
+     *
+     * Deliberately well above the acceptance floor: on a clean scan almost
+     * anything qualifies, and letting paper grain into the candidate set makes
+     * the line fit choose between a real edge and a hundred imaginary ones.
+     *
+     * But it was the only floor there was, which made `minResponseSigma`
+     * unreachable — an edge between 3 and 7.5 sigma was not scored badly, it
+     * was never generated. That is exactly the boundary a pale studio
+     * backdrop makes against white paper, i.e. the input `photo.ts` opens by
+     * naming as the most common one there is, and it came back as "this edge
+     * could not be measured" and took the whole detection with it.
+     *
+     * So this is now the STRICT pass, and edges that fail it are re-measured
+     * at `minResponseSigma` — the floor the acceptance test always claimed.
+     */
+    strictResponseMultiplier: 2.5,
+    /**
+     * Inlier floor on the RELAXED pass.
+     *
+     * The floor above asks "did most scanlines see this edge?", and on a
+     * photograph where most of one side is genuinely invisible the honest
+     * answer is no — while the line is still real. Measured on the pale-
+     * backdrop fixture, the left edge's best candidate is a 93-sigma step at
+     * 89.7 degrees, i.e. unmistakable and correctly oriented, supported by
+     * 36% of scanlines because the backdrop matches the paper down the lower
+     * half of that side. There is nothing wrong with the measurement; there
+     * is simply less of the edge to measure.
+     *
+     * Lowering the floor alone would let a fit through noise in, so it is
+     * lowered WITHOUT touching `minEdgeEvidence`: support times strength must
+     * still clear 0.35, which at this floor demands a step of roughly 9 sigma.
+     * Few scanlines, each seeing something unmistakable, is evidence. Few
+     * scanlines each seeing something faint is not, and still fails.
+     */
+    relaxedInlierRatioFloor: 0.28,
+    /**
+     * A candidate step that keeps less than this fraction of its response when
+     * the outside window is lengthened to match the inside one is MARKED as a
+     * printed rule rather than a boundary. The mechanism and the measurement
+     * are in `edgeStepProfile`'s `thinOutsideRatio`.
+     *
+     * Half, because a genuine edge with a rule a millimetre or two outside it
+     * — the printed "Affix photo" border, on nearly every real form — has a
+     * short-outside median polluted by that rule and a long-outside median of
+     * paper, so its long response is typically HIGHER, never much lower. A
+     * rule alone drops to a few percent.
+     */
+    thinOutsideRatio: 0.5,
+    /**
+     * How much of a candidate line's score is forfeited when ALL of its
+     * inliers are rule-like steps (scaled by the fraction that are).
+     *
+     * Deliberately a penalty rather than a veto. Measured on the pale-backdrop
+     * fixture, the header rule 4 mm above the photograph scored 0.87 against
+     * the true top edge's 0.8 — a rule seen by every scanline beats a faint
+     * edge seen by most — and this is what reverses that. But on an EMPTY
+     * printed box the border is the only line there is, and fitting it is
+     * how the detector goes on to say the box is empty. At 0.6 a rule-built
+     * line still wins an uncontested edge and loses every contested one.
+     */
+    thinCandidatePenalty: 0.6,
+    /**
+     * A fitted edge whose inliers are more than this fraction rule-like steps
+     * is a PRINTED LINE, and the strict pass does not get to call it the
+     * boundary without the relaxed pass first looking for a real one. If the
+     * relaxed pass finds nothing better the printed line stands — which is
+     * how an empty box's border is still fitted and the box reported empty.
+     */
+    ruleLikeFraction: 0.5,
+    /**
+     * RANSAC tolerance on the relaxed pass, as a multiple of `lineToleranceMM`.
+     *
+     * A faint edge is also a SOFT one: a pale backdrop grades into the paper
+     * over a couple of pixels rather than stepping, and the plateau-centre
+     * estimate jitters with it. Measured on the pale-backdrop fixture, the
+     * true top edge's 95 samples spread over 10 px (1.3 mm) around their mean
+     * at 16-20 sigma each; a 2 px tolerance could gather a third of them, and
+     * a diagonal through the scatter out-supported every horizontal slice. At
+     * 3x the same samples fit one line at 180 degrees. The strict pass keeps
+     * the tight tolerance, because on a sharp edge tight is exactly right.
+     */
+    relaxedToleranceMultiplier: 3,
+    /**
+     * Confidence ceiling when any edge needed the relaxed pass.
+     *
+     * A boundary measured at 4 sigma is a real measurement and a weaker one
+     * than a boundary measured at 40. The crop is offered; the certainty is
+     * not. Below the 0.8 that `extract-regions.ts` uses to force review, so
+     * such a detection always reaches a human.
+     */
+    faintEdgeConfidenceCap: 0.7,
+    /**
      * Combined evidence an edge must carry: support x strength.
      *
      * Gating on support alone is wrong in both directions — it passes a
@@ -164,6 +258,50 @@ export const REGION_PARAMS = Object.freeze({
     aspectTolerance: 0.15,
     /** quadArea / minAreaRectArea. Below this the "rectangle" is not one. */
     minRectangularity: 0.8,
+    /**
+     * How far the four fitted edges may disagree about the paste angle before
+     * they stop being four sides of one rectangle.
+     *
+     * A photograph IS a rectangle — that is a fact about the object, not an
+     * assumption about the image — so its four edges share a single angle, and
+     * four independent line fits that agree on it to within a couple of
+     * degrees have measured that angle four times. When one of them is well
+     * outside the others it is not a fifth opinion about the paste angle; it
+     * is a line fitted to something else, usually a strong interior contour on
+     * the side where the boundary was faintest.
+     *
+     * So `squareUpEdges` re-lays every accepted edge on the consensus angle,
+     * moving only its DIRECTION. Each line keeps the distance it was measured
+     * at. And past this spread nothing is repaired: lines that disagree by more
+     * than this are not a slightly noisy rectangle, and pretending otherwise is
+     * how a detector manufactures a plausible quadrilateral out of unrelated
+     * evidence.
+     */
+    maxEdgeAngleSpreadDegrees: 8,
+    /**
+     * Below this spread the four edges are treated as already agreeing and the
+     * measured quad is delivered untouched. Four independent RANSAC fits of a
+     * clean rectangle land within a degree or two of one another; anything
+     * wider means at least one of them measured something else.
+     */
+    consistentEdgeSpreadDegrees: 3,
+    /**
+     * How far from horizontal or vertical a single fitted edge may lie and
+     * still be believed as that edge.
+     *
+     * This was 20 degrees, which is not a crooked paste — it is a diagonal.
+     * The crookedest photograph in the fixture set is 6 degrees, and a person
+     * gluing one on cannot easily manage more than that without noticing.
+     * What DOES lie at 11-20 degrees, reliably, is the outline of a head or a
+     * shoulder inside the photograph: measured on the pale-backdrop fixture,
+     * the right edge was accepted as a 190-sigma line at 72 degrees, running
+     * from the hairline to the collar, and the crop warped that trapezoid
+     * into a rectangle. At 12 degrees a hairline contour at 12.7 was still
+     * returned as a candidate and, fitted first, swallowed enough of the true
+     * top edge's samples to fail it on evidence. Eight leaves 2 degrees over
+     * the tested paste and excludes every contour the fixtures produce.
+     */
+    maxEdgeAngleDegrees: 8,
     /** Content score needed to accept. */
     contentThreshold: 0.55,
     /** Content score needed on a greyscale page, where chroma features are dead. */

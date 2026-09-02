@@ -620,6 +620,15 @@ export default function ScanWorkbench({ form }: { form?: BoundForm }) {
                 text={result.text}
                 edits={textEdits}
                 onEdit={(fieldId, value) => setTextEdits((current) => ({ ...current, [fieldId]: value }))}
+                // The same bytes, the same template, one more request. A rate
+                // limit is a moment's problem and re-photographing the paper to
+                // get past it would be a strange thing to ask.
+                onRetry={
+                  lastFile.current
+                    ? () => void submit(lastFile.current!, lastTemplate.current ?? undefined)
+                    : undefined
+                }
+                busy={busy}
               />
             ) : null}
 
@@ -752,10 +761,15 @@ function TextFieldsSection({
   text,
   edits,
   onEdit,
+  onRetry,
+  busy,
 }: {
   text: TextSection;
   edits: Record<string, string>;
   onEdit: (fieldId: string, value: string) => void;
+  /** Re-sends the capture that produced this result. Absent when there is nothing to re-send. */
+  onRetry?: () => void;
+  busy?: boolean;
 }) {
   // The page-level states outrank the configuration states: on an unregistered
   // page the honest message is about the page, whatever the server env holds.
@@ -787,6 +801,14 @@ function TextFieldsSection({
       <p className="notice warn" role="alert">
         <strong>The fields could not be read</strong> &mdash; {text.failure}. The extracted images
         above are unaffected.
+        {onRetry ? (
+          <>
+            {" "}
+            <button type="button" className="button secondary small" onClick={onRetry} disabled={busy}>
+              {busy ? "Reading…" : "Read again"}
+            </button>
+          </>
+        ) : null}
       </p>
     ) : null;
 

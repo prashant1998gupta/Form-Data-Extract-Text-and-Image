@@ -98,7 +98,7 @@ test("one field failing costs one field, stated in words on that field", async (
   assert.equal(readings[1].failure, undefined);
 });
 
-test("a retryable fault is retried once and can succeed", async () => {
+test("a retryable fault is retried and can succeed", async () => {
   let attempts = 0;
   const readings = await readTextFields({
     rectified: page(),
@@ -116,6 +116,67 @@ test("a retryable fault is retried once and can succeed", async () => {
   });
   assert.equal(attempts, 2);
   assert.equal(readings[0].value, "Anita");
+});
+
+test("a rate limit that outlasts one retry is still read on the third attempt", async () => {
+  // THE FAILURE THIS PINS. A free-tier rate limit is a window, and the first
+  // retry lands inside it more often than not. With exactly one retry, one
+  // composite request refused twice put "the reader is rate limited" under
+  // every field on the screen — while the identical scan a moment later read
+  // all of them. Two chances were not enough.
+  let attempts = 0;
+  const readings = await readTextFields({
+    rectified: page(),
+    template: template(),
+    provider: scripted({
+      "Patient Name": () => {
+        attempts += 1;
+        if (attempts < 3) {
+          throw new ProviderError("the reader is rate limited — try again in a moment", { retryable: true, retryAfterMs: 10 });
+        }
+        return '{"value": "Anita"}';
+      },
+      Age: () => '{"value": "34"}',
+    }),
+  });
+  assert.equal(attempts, 3);
+  assert.equal(readings[0].value, "Anita");
+  assert.equal(readings[0].failure, undefined);
+});
+
+test("retries stop at the attempt cap and the last fault is what the operator reads", async () => {
+  let attempts = 0;
+  const readings = await readTextFields({
+    rectified: page(),
+    template: template(),
+    provider: scripted({
+      "Patient Name": () => {
+        attempts += 1;
+        throw new ProviderError("the reader is rate limited — try again in a moment", { retryable: true, retryAfterMs: 10 });
+      },
+      Age: () => '{"value": "34"}',
+    }),
+  });
+  assert.equal(attempts, 3, "three attempts, not an unbounded loop");
+  assert.match(readings[0].failure ?? "", /rate limited/);
+  assert.equal(readings[1].value, "34", "the other field is unaffected");
+});
+
+test("a non-retryable fault is never retried", async () => {
+  let attempts = 0;
+  const readings = await readTextFields({
+    rectified: page(),
+    template: template(),
+    provider: scripted({
+      "Patient Name": () => {
+        attempts += 1;
+        throw new ProviderError("the Groq API key was refused — check GROQ_API_KEY", { retryable: false });
+      },
+      Age: () => '{"value": "34"}',
+    }),
+  });
+  assert.equal(attempts, 1, "asking a refused key again is asking the same question louder");
+  assert.match(readings[0].failure ?? "", /GROQ_API_KEY/);
 });
 
 test("a malformed reply becomes that field's failure, never a crash", async () => {

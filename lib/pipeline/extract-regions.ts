@@ -42,7 +42,7 @@ import {
 import { decodeFullRgb, decodeImage, type DecodedImage } from "../vision/io.ts";
 import { detectPageQuad, type PageDetection } from "../vision/page.ts";
 import { warpQuadRgb } from "../vision/warp-rgb.ts";
-import { applyHomography, estimateHomography, multiply3 } from "../vision/geometry.ts";
+import { applyHomography, estimateHomography, minAreaRect, multiply3 } from "../vision/geometry.ts";
 import { detectPhoto } from "../regions/photo.ts";
 import { detectSignature } from "../regions/signature.ts";
 import { detectThumb } from "../regions/thumb.ts";
@@ -51,7 +51,7 @@ import { assessFormPresence, type FormPresence } from "../regions/form-presence.
 import { verifyTemplateAnchors, type TemplateRegistration } from "../regions/template-anchors.ts";
 import { REGION_PARAMS, type AbsenceReason, type GateClause } from "../regions/params.ts";
 import { allFields, imageFields, isImageField, type FormField, type FormTemplate } from "../templates/types.ts";
-import type { Matrix3, Point, Quad, Rect, Rgb } from "../vision/types.ts";
+import { quadPoints, type Matrix3, type Point, type Quad, type Rect, type Rgb } from "../vision/types.ts";
 
 export interface RegionResult {
   readonly fieldId: string;
@@ -420,7 +420,7 @@ async function detectField(
 
   if (field.type === "photograph") {
     const expected = toPixels(field.box!, template);
-    const size = PHOTO_SIZES[field.photoSize ?? "passport35x45"];
+    const size = declaredPhotoSize(field);
     const detection = detectPhoto({
       lab: channels.lab,
       texture: channels.texture,
@@ -431,6 +431,7 @@ async function detectField(
       pxPerMM,
       printedBorder: field.printedBorder ? toPixels(field.printedBorder, template) : undefined,
       pageSaturatedFraction: channels.saturatedFraction,
+      sizeTolerance: field.photoSizeTolerance,
       // A box a person DREW is a different kind of claim from one registration
       // produced, and the detector has to be told. With the registered prior it
       // refuses a box 4 mm out; with this one it recovers a box 6 mm out at IoU
@@ -447,7 +448,19 @@ async function detectField(
     }
 
     const finer = await finerPhotoSource();
-    const crop = renderPhotoCrop(rectified, detection.quad, size, pxPerMM, 300, finer ?? undefined);
+    // A NAMED size is the size to deliver at: the operator said "35x45", and
+    // warping the quad into that rectangle squares up a crooked paste and
+    // trims the sliver of paper a hand-drawn box leaves round the edge.
+    //
+    // A size taken from a dragged box is not that. It is the box, not the
+    // photograph, and it is a few millimetres proud on sides the person
+    // happened to overshoot — usually not the same few on each. Delivering
+    // at it would stretch the portrait by exactly that asymmetry. So the
+    // crop is emitted at what was MEASURED, which is the photograph's own
+    // shape, and only the target resolution comes from the declaration.
+    const deliverAt =
+      field.photoSize || !field.photoSizeMM ? size : measuredSizeMM(detection.quad, pxPerMM);
+    const crop = renderPhotoCrop(rectified, detection.quad, deliverAt, pxPerMM, 300, finer ?? undefined);
     const { encodeRgbPng } = await import("../vision/io.ts");
     return {
       ...base,
@@ -529,4 +542,24 @@ async function detectField(
 function toPixels(rect: RectMM, template: FormTemplate): Rect {
   void template;
   return mmToCts(rect);
+}
+
+/**
+ * The physical size a photograph is judged against.
+ *
+ * Precedence is declaration-first: a size the operator NAMED, then a size a
+ * drawn box implies, then the passport default. The default used to be
+ * applied at parse time, which made it indistinguishable from a statement —
+ * see `photoSizeMM` in `templates/types.ts` for what that cost.
+ */
+function declaredPhotoSize(field: FormField): { widthMM: number; heightMM: number } {
+  if (field.photoSize) return PHOTO_SIZES[field.photoSize];
+  if (field.photoSizeMM) return field.photoSizeMM;
+  return PHOTO_SIZES.passport35x45;
+}
+
+/** The fitted rectangle's own dimensions, in millimetres of paper. */
+function measuredSizeMM(quad: Quad, pxPerMM: number): { widthMM: number; heightMM: number } {
+  const rect = minAreaRect(quadPoints(quad));
+  return { widthMM: rect.width / pxPerMM, heightMM: rect.height / pxPerMM };
 }

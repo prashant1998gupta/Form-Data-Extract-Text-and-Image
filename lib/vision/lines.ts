@@ -65,6 +65,12 @@ export interface StepSample {
   readonly point: Point;
   /** Step strength in units of paper sigma. 3.0 is the acceptance floor. */
   readonly response: number;
+  /**
+   * Set when this step collapses once the outside window is lengthened to
+   * match the inside one — the signature of a printed rule sitting in the
+   * short outside window rather than a boundary. See `thinOutsideRatio`.
+   */
+  readonly thin?: boolean;
 }
 
 export interface LineFit {
@@ -111,6 +117,37 @@ export function edgeStepProfile(
      * registration predicts.
      */
     peaksPerLine?: number;
+    /**
+     * MARKS a candidate step whose response collapses when the OUTSIDE window
+     * is lengthened to match the inside one (`StepSample.thin`). 0 disables.
+     *
+     * The sustain window below is one-sided. It rejects a printed rule that
+     * falls INSIDE the object — three dark pixels cannot move the median of a
+     * 3 mm window — but a rule that falls in the short OUTSIDE window makes
+     * that median dark, and a dark outside against a bright inside is exactly
+     * what a boundary looks like. Measured on the pale-backdrop fixture, the
+     * form's header rule 4 mm above the photograph produced a 50-sigma step
+     * seen by 100 % of scanlines, while the photograph's own faint top edge
+     * lost to it. Every printed "Affix photo" border is a rule a few
+     * millimetres outside a photograph, so this is not a corner case.
+     *
+     * A real boundary has paper for the whole of a 3 mm outside window and
+     * object for the whole of a 3 mm inside window, so lengthening the outside
+     * window leaves its response alone. A rule's response vanishes. A sample
+     * whose long-outside response is under this fraction of its short-outside
+     * one is marked `thin`.
+     *
+     * MARKED, NOT DROPPED, and the difference is a product behaviour. An
+     * EMPTY printed photo box has nothing in it but its border, and the only
+     * way the detector can say "this box was located and is empty" — the
+     * confident true negative the verify screen is built around — is to fit
+     * that border. Dropping rule-like steps here turned that into "an edge
+     * could not be measured", which is an apology where a fact was available.
+     * So the caller decides what a rule-built line is worth: `photo.ts`
+     * penalises it in the edge score, so a real boundary beats it whenever
+     * one exists, and it is still there to be fitted when nothing else is.
+     */
+    thinOutsideRatio?: number;
   } = {},
 ): StepSample[] {
   if (channels.length === 0) throw new Error("edgeStepProfile: no channels");
@@ -207,21 +244,50 @@ export function edgeStepProfile(
     // 35 mm photo that is a visible strip of paper down one side.
     const floor = Math.max(options.minResponse ?? 8, bestResponse * (options.outermostFraction ?? 0.15));
     const wanted = Math.max(1, options.peaksPerLine ?? 1);
-    const taken: number[] = [];
+    const thinOutsideRatio = options.thinOutsideRatio ?? 0;
+    // Plateaus already emitted, as index ranges. The next peak may not fall
+    // inside one of these, or within a short window of it.
+    //
+    // THIS USED TO BE A FIXED RADIUS of `trailingWindow` around each peak's
+    // argmax, and that radius was the long inside window — 3 mm. A second
+    // real step beginning within 3 mm of the first peak's argmax was therefore
+    // never emitted, whatever its plateau looked like. The step that begins
+    // there, on nearly every real form, is the photograph's own edge just
+    // inside its printed "Affix photo" border: measured on the pale-backdrop
+    // fixture, the header rule's argmax sat 18 px from the start of the true
+    // top edge's plateau, so the edge was never a candidate on any scanline
+    // that also saw the rule — which was all of them — and the rule was fitted
+    // as the boundary with 100 % support. The plateau IS the extent of a step;
+    // excluding by plateau excludes exactly the same feature seen twice and
+    // nothing else.
+    const taken: { low: number; high: number }[] = [];
+    let emitted = 0;
 
-    for (let peak = 0; peak < wanted; peak += 1) {
+    // Bounded by the number of distinct plateaus a scanline can hold, so a
+    // scanline of nothing but rejected candidates still terminates.
+    for (let attempt = 0; emitted < wanted && attempt < responses.length; attempt += 1) {
       let index = -1;
       let value = 0;
       for (let i = 0; i < responses.length; i += 1) {
         const candidate = responses[i]!;
         if (candidate < floor || candidate <= value) continue;
         // Skip anything already claimed by an earlier peak's plateau.
-        if (taken.some((t) => Math.abs(i - t) <= trailingWindow)) continue;
+        if (taken.some((t) => i >= t.low - window && i <= t.high + window)) continue;
         value = candidate;
         index = i;
       }
       if (index < 0) break;
-      taken.push(index);
+
+      // A step that disappears when the outside window is lengthened was a
+      // thin feature sitting in the short one, not a boundary. See
+      // `thinOutsideRatio` above.
+      let thin = false;
+      if (thinOutsideRatio > 0) {
+        const across = searchStart + index;
+        const longResponse = longOutsideResponse(channels, vertical, along, across, insideIsHigher, acrossStart, acrossEnd, sustain, buffer);
+        thin = longResponse < thinOutsideRatio * value;
+      }
+      emitted += 1;
 
       // Walk out while the response stays within 3 % of this peak: that run is
       // the plateau, and it is symmetric about the true edge.
@@ -230,6 +296,8 @@ export function edgeStepProfile(
       let high = index;
       while (low > 0 && responses[low - 1]! >= plateauFloor) low -= 1;
       while (high < responses.length - 1 && responses[high + 1]! >= plateauFloor) high += 1;
+
+      taken.push({ low, high });
 
       let centre = (low + high) / 2;
 
@@ -262,11 +330,55 @@ export function edgeStepProfile(
       samples.push({
         point: vertical ? { x: across, y: along } : { x: along, y: across },
         response: value,
+        ...(thin ? { thin } : {}),
       });
     }
   }
 
   return samples;
+}
+
+/**
+ * The step response at `across` with BOTH windows the long (sustain) length,
+ * clamped to the band. Used only to confirm a candidate found with the short
+ * outside window; see `thinOutsideRatio`.
+ */
+function longOutsideResponse(
+  channels: readonly WeightedChannel[],
+  vertical: boolean,
+  along: number,
+  across: number,
+  insideIsHigher: boolean,
+  acrossStart: number,
+  acrossEnd: number,
+  sustain: number,
+  buffer: Float64Array,
+): number {
+  // Outside is the leading side when the inside is the higher index.
+  let outsideStart: number;
+  let outsideCount: number;
+  let insideStart: number;
+  let insideCount: number;
+  if (insideIsHigher) {
+    outsideStart = Math.max(acrossStart, across - sustain + 1);
+    outsideCount = across - outsideStart + 1;
+    insideStart = across + 1;
+    insideCount = Math.min(sustain, acrossEnd - insideStart);
+  } else {
+    insideStart = Math.max(acrossStart, across - sustain + 1);
+    insideCount = across - insideStart + 1;
+    outsideStart = across + 1;
+    outsideCount = Math.min(sustain, acrossEnd - outsideStart);
+  }
+  if (outsideCount < 1 || insideCount < 1) return Number.POSITIVE_INFINITY;
+
+  let response = 0;
+  for (const channel of channels) {
+    const outside = medianAlong(channel.image, vertical, along, outsideStart, outsideCount, buffer);
+    const inside = medianAlong(channel.image, vertical, along, insideStart, insideCount, buffer);
+    response += (channel.weight * Math.abs(outside - inside)) / Math.max(1e-6, channel.sigma);
+  }
+  return response;
 }
 
 /** Median of `count` samples starting at `start`, taken across the scan axis. */
@@ -311,11 +423,19 @@ function medianAlong(
  *                  resolution — tight, because the whole point is sub-pixel
  *                  boundary accuracy.
  */
+export interface LineOrientation {
+  /** The direction the line is expected to run, in degrees: 0 horizontal, 90 vertical. */
+  readonly angleDegrees: number;
+  /** How far from that a hypothesis may lie and still be considered. */
+  readonly maxDeviationDegrees: number;
+}
+
 export function ransacLineFit(
   samples: readonly StepSample[],
   tolerance: number,
   iterations = 200,
   minResponse = 1.0,
+  orientation?: LineOrientation,
 ): LineFit | null {
   const usable = samples.filter((s) => s.response >= minResponse);
   if (usable.length < 8) return null;
@@ -349,6 +469,18 @@ export function ransacLineFit(
 
     const line = lineThrough(points[i]!, points[j]!);
     if (!line) continue;
+    // ORIENTATION IS A CONSTRAINT, NOT A FILTER. Checking the angle after the
+    // fit — which is what `photo.ts` used to do — lets a hypothesis that could
+    // never be accepted win the inlier count anyway and consume a candidate
+    // slot. Measured on the pale-backdrop fixture, the top band's three
+    // candidates were the printed rule and two contours of the head at 15
+    // degrees; the photograph's own edge, at 180 degrees with 95 samples, was
+    // never returned because a diagonal through the scattered cloud always
+    // collected more inliers than any horizontal slice of it. Refusing the
+    // diagonals HERE leaves the slots for lines that can actually be edges.
+    if (orientation && angleDifference(lineAngleDegrees(line), orientation.angleDegrees) > orientation.maxDeviationDegrees) {
+      continue;
+    }
 
     const inliers: number[] = [];
     for (let k = 0; k < points.length; k += 1) {
@@ -364,8 +496,19 @@ export function ransacLineFit(
 
   // Refit on all inliers by total least squares — the two-point hypothesis is
   // only a seed, and using it as the answer throws away most of the evidence.
-  const refined = totalLeastSquaresLine(bestInliers.map((k) => points[k]!));
-  if (!refined) return null;
+  //
+  // Unless the refit leaves the permitted orientation: the hypothesis was
+  // admitted on its angle, and a refined line that drifts past the limit is
+  // no longer the line that was admitted. Measured, an 11.9-degree hypothesis
+  // through a head contour refined to 12.7 and was returned past a 12-degree
+  // cap. The seed line keeps the constraint honest; the evidence it loses is
+  // the sub-pixel polish, which a contour was never going to deserve.
+  const fitted = totalLeastSquaresLine(bestInliers.map((k) => points[k]!));
+  if (!fitted) return null;
+  const refined =
+    orientation && angleDifference(lineAngleDegrees(fitted), orientation.angleDegrees) > orientation.maxDeviationDegrees
+      ? bestLine
+      : fitted;
 
   const finalInliers: number[] = [];
   let responseSum = 0;
@@ -410,12 +553,13 @@ export function fitLineCandidates(
   maxLines = 3,
   iterations = 200,
   minResponse = 1,
+  orientation?: LineOrientation,
 ): LineFit[] {
   const found: LineFit[] = [];
   let pool = [...samples];
 
   for (let pass = 0; pass < maxLines; pass += 1) {
-    const fit = ransacLineFit(pool, tolerance, iterations, minResponse);
+    const fit = ransacLineFit(pool, tolerance, iterations, minResponse, orientation);
     if (!fit) break;
     found.push(fit);
     const remaining = pool.filter((s) => Math.abs(distanceToLine(fit.line, s.point)) > tolerance * 2);
