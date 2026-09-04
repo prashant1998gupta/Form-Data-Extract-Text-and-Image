@@ -143,7 +143,9 @@ async function describeRefusal(response: Response): Promise<string | null> {
     const error = payload.error;
     if (error && typeof error === "object") {
       if (typeof error.failed_generation === "string") {
-        console.error("groq rejected the model's reply as JSON:", error.failed_generation.slice(0, 600));
+        // One escaped line: a multi-line value is cut to its first line by
+        // most log viewers, which for a JSON reply is a lone brace.
+        console.error(`groq rejected the model's reply as JSON: ${JSON.stringify(error.failed_generation.slice(0, 2000))}`);
       }
       if (typeof error.message === "string") {
         return typeof error.code === "string" ? `${error.message} [${error.code}]` : error.message;
