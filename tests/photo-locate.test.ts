@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { PhotoDefinition } from "../lib/forms/definitions.ts";
-import { locatePhoto, normalizeBox, type NormalizedBox } from "../lib/photo/locate-photo.ts";
+import { canvasBoxToImage, locatePhoto, normalizeBox, type NormalizedBox } from "../lib/photo/locate-photo.ts";
 import type { Rect, Rgb } from "../lib/vision/types.ts";
 import { renderSyntheticForm } from "./helpers/synthetic-form.ts";
 
@@ -69,7 +69,7 @@ test("a hint on blank paper or printed text is refused, never delivered as a pho
   ]) {
     const result = await locatePhoto(rgb, box, PASSPORT);
     assert.equal(result.found, false, `delivered a "photograph" from ${JSON.stringify(box)}`);
-    if (!result.found) assert.equal(result.reason, "empty_box");
+    if (!result.found) assert.equal(result.reason, "not_found");
   }
 });
 
@@ -84,32 +84,65 @@ test("an implausible hint is refused in words", async () => {
   assert.equal(strip.found, false);
 });
 
+test("a hint a whole print-width off — the reader's real precision — still finds the print by searching", async () => {
+  const { rgb, truth } = renderSyntheticForm({ withThumb: false });
+  assert.ok(truth.photo);
+  // Left by one width, as the model's horizontal misses ran on real forms.
+  const left = await locatePhoto(rgb, hintFor(truth.photo, rgb, { left: -1, right: -1 }), PASSPORT);
+  assert.ok(left.found && left.method === "measured", left.found ? left.method : left.detail);
+  // Down and slightly small.
+  const down = await locatePhoto(rgb, hintFor(truth.photo, rgb, { top: 0.6, bottom: 0.45 }), PASSPORT);
+  assert.ok(down.found && down.method === "measured", down.found ? down.method : down.detail);
+});
+
+test("a hint with nothing photograph-like within reach finds nothing, in words", async () => {
+  const { rgb, truth } = renderSyntheticForm({ withThumb: false });
+  assert.ok(truth.photo);
+  const far = await locatePhoto(rgb, hintFor(truth.photo, rgb, { left: -3.2, right: -3.2 }), PASSPORT);
+  assert.equal(far.found, false);
+  if (!far.found) assert.equal(far.reason, "not_found");
+});
+
 test("a photograph whose edges cannot be measured is still cut, and flagged", async () => {
-  // A coloured disc on paper: plainly not blank, plainly no straight edges.
+  // A picture that fades into the paper over fifty pixels on every side:
+  // plainly a picture, with no step anywhere for an edge to be fitted to.
   const width = 600;
   const height = 800;
   const data = new Uint8ClampedArray(width * height * 3).fill(248);
-  const cx = 300;
-  const cy = 400;
-  const radius = 120;
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      if ((x - cx) ** 2 + (y - cy) ** 2 > radius * radius) continue;
+  const left = 180;
+  const top = 240;
+  const pictureWidth = 240;
+  const pictureHeight = 320;
+  const feather = 50;
+  for (let y = top; y < top + pictureHeight; y += 1) {
+    for (let x = left; x < left + pictureWidth; x += 1) {
+      const inset = Math.min(x - left, left + pictureWidth - 1 - x, y - top, top + pictureHeight - 1 - y);
+      const alpha = Math.min(1, inset / feather);
+      const shade = 40 + ((x - left) / pictureWidth) * 150 + ((y - top) / pictureHeight) * 30;
       const p = (y * width + x) * 3;
-      data[p] = 60 + (x % 7) * 3;
-      data[p + 1] = 90 + (y % 5) * 4;
-      data[p + 2] = 150;
+      data[p] = 248 + (shade - 248) * alpha;
+      data[p + 1] = 248 + (shade * 0.9 - 248) * alpha;
+      data[p + 2] = 248 + (shade * 0.8 + 30 - 248) * alpha;
     }
   }
   const rgb: Rgb = { data, width, height, channels: 3 };
-  const box = { x1: (cx - radius) / width, y1: (cy - radius) / height, x2: (cx + radius) / width, y2: (cy + radius) / height };
+  const box = { x1: left / width, y1: top / height, x2: (left + pictureWidth) / width, y2: (top + pictureHeight) / height };
   const result = await locatePhoto(rgb, box, PASSPORT);
   assert.ok(result.found, result.found ? "" : result.detail);
   if (!result.found) return;
   assert.equal(result.method, "located");
   assert.equal(result.needsReview, true);
   assert.ok(result.confidence < 0.8);
-  assert.ok(Math.abs(result.width - 2 * radius) < 20, `width ${result.width}`);
+  assert.ok(result.width >= pictureWidth * 0.7 && result.width <= pictureWidth * 1.4, `width ${result.width}`);
+});
+
+test("a box on the square canvas is restated in the capture's own fractions", () => {
+  // A 1414x2000 capture at the top-left of a 2000 square: x stretches by 2000/1414, y is unchanged.
+  const box = canvasBoxToImage({ x1: 0.56, y1: 0.03, x2: 0.678, y2: 0.181 }, 1414, 2000, 2000)!;
+  assert.ok(Math.abs(box.x1 - 0.792) < 0.002 && Math.abs(box.x2 - 0.959) < 0.002, `${box.x1} ${box.x2}`);
+  assert.ok(Math.abs(box.y1 - 0.03) < 1e-9 && Math.abs(box.y2 - 0.181) < 1e-9);
+  // Entirely in the padding: nothing to cut.
+  assert.equal(canvasBoxToImage({ x1: 0.8, y1: 0.1, x2: 0.95, y2: 0.3 }, 1414, 2000, 2000), null);
 });
 
 test("the reader's numbers are read in whatever scale it used", () => {

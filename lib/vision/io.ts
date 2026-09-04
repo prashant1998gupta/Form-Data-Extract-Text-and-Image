@@ -226,6 +226,36 @@ export async function encodeRgbJpeg(image: Rgb, maxEdge?: number, quality = 82):
   return pipeline.jpeg({ quality, mozjpeg: true }).toBuffer();
 }
 
+/**
+ * Encodes the image at the top-left of a SQUARE canvas of `edge` pixels,
+ * padded on the right and bottom with a flat grey.
+ *
+ * For the vision model, whose bounding boxes are asked for in thousandths of
+ * the picture. On a portrait page the model was found to measure x in
+ * thousandths of the HEIGHT — as if the picture had been letterboxed to a
+ * square — so on a square canvas thousandths of width, thousandths of height
+ * and pixels of a 1000-px copy all coincide, and its box means one thing.
+ */
+export async function encodeRgbJpegSquare(
+  image: Rgb,
+  edge: number,
+  quality = 82,
+  background = { r: 118, g: 118, b: 118 },
+): Promise<{ jpeg: Buffer; width: number; height: number; edge: number }> {
+  const longest = Math.max(image.width, image.height);
+  const scale = Math.min(1, edge / longest);
+  const width = Math.max(1, Math.round(image.width * scale));
+  const height = Math.max(1, Math.round(image.height * scale));
+  const jpeg = await sharp(Buffer.from(image.data.buffer, image.data.byteOffset, image.data.byteLength), {
+    raw: { width: image.width, height: image.height, channels: image.channels },
+  })
+    .resize(width, height, { fit: "fill", kernel: "lanczos3" })
+    .extend({ top: 0, left: 0, right: edge - width, bottom: edge - height, background })
+    .jpeg({ quality, mozjpeg: true })
+    .toBuffer();
+  return { jpeg, width, height, edge };
+}
+
 /** Encodes a working-resolution RGB buffer to PNG. */
 export async function encodeRgbPng(image: Rgb): Promise<Buffer> {
   return sharp(Buffer.from(image.data.buffer, image.data.byteOffset, image.data.byteLength), {

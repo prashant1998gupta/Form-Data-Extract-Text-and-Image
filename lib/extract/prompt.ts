@@ -25,7 +25,8 @@ export const READER_SYSTEM_PROMPT = [
   "- For a checklist field, reply with an array of the printed items that are ticked, or [] if none.",
   '- For a Yes or No field, reply "Yes" or "No" as ticked or written, or "".',
   "- Ignore signatures, thumb impressions and stamps: they are never transcribed.",
-  '- Also find the pasted photograph of the person, if there is one. "photo" is its bounding box [x1, y1, x2, y2] as four integers from 0 to 1000: x in thousandths of the image width from the left edge, y in thousandths of the image height from the top edge. Give the box of the photograph itself, not of the printed frame around it, and give null when no photograph is pasted on the form.',
+  "- The picture is a square canvas: the photograph of the form sits at its top-left, and any flat grey area along the right or bottom edge is empty padding, not part of the form.",
+  '- Also find the pasted photograph of the person, if there is one. "photo" is its bounding box [x1, y1, x2, y2] as four integers from 0 to 1000, in thousandths of the full square canvas: x from its left edge, y from its top edge. Give the box of the photograph itself, not of the printed frame around it, and give null when no photograph is pasted on the form.',
   '- If the image is not a filled-in copy of this form, or is too blurred or dark to read, set "readable" to false and leave every field "".',
   'Reply with only one JSON object of exactly this shape: {"readable": true, "photo": [x1, y1, x2, y2] or null, "fields": {<key>: <value>, ...}} — every listed key present, no other keys.',
 ].join("\n");

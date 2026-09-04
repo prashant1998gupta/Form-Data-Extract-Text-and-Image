@@ -6,8 +6,8 @@ import { ProviderError, type TextProvider } from "@/lib/extract/provider-types";
 import { readWithRetry, resolveReader } from "@/lib/extract/reader";
 import { admitReaderScan, scansPerMinute } from "@/lib/extract/throttle";
 import { formById, type FormDefinition } from "@/lib/forms/definitions";
-import { locatePhoto, normalizeBox, type LocatedPhoto } from "@/lib/photo/locate-photo";
-import { decodeFullRgb, decodeImage, encodeRgbJpeg, ImageDecodeError, type DecodedImage } from "@/lib/vision/io";
+import { canvasBoxToImage, locatePhoto, normalizeBox, type LocatedPhoto } from "@/lib/photo/locate-photo";
+import { decodeFullRgb, decodeImage, encodeRgbJpegSquare, ImageDecodeError, type DecodedImage } from "@/lib/vision/io";
 
 export const runtime = "nodejs";
 /**
@@ -26,10 +26,12 @@ const MAX_BYTES = 25 * 1024 * 1024;
 
 /**
  * The picture the model is shown: the capture as taken, at 2000 px on its long
- * edge — comfortably legible for handwriting, well inside Groq's 4 MB base64
- * limit. Not straightened first: the model reads a tilted page fine, and the
- * box it returns for the photograph must refer to the same frame the crop is
- * cut from, which is this one.
+ * edge, at the top-left of a 2000 px square canvas — comfortably legible for
+ * handwriting, well inside Groq's 4 MB base64 limit. Not straightened first:
+ * the model reads a tilted page fine, and the box it returns must refer to
+ * the frame the crop is cut from. Square, because the model's box was found
+ * to use the picture's height as the scale of BOTH axes; on a square every
+ * convention agrees (see `encodeRgbJpegSquare`).
  */
 const READER_IMAGE_EDGE = 2000;
 const READER_TIMEOUT_MS = 40_000;
@@ -142,21 +144,27 @@ export async function POST(request: Request): Promise<Response> {
   }
 }
 
-/** The model reads the capture; its photo box is returned as fractions of the picture. */
+/** The model reads the capture; its photo box comes back as fractions of the capture. */
 async function readCapture(decoded: DecodedImage, form: FormDefinition, provider: TextProvider) {
   const started = performance.now();
-  const jpeg = await encodeRgbJpeg(decoded.rgb, READER_IMAGE_EDGE, 85);
-  const sent = sentSize(decoded.rgb.width, decoded.rgb.height, READER_IMAGE_EDGE);
+  const canvas = await encodeRgbJpegSquare(decoded.rgb, READER_IMAGE_EDGE, 85);
   const prompt = buildReaderPrompt(form);
   const text = await readWithRetry(provider, {
-    imageJpegBase64: jpeg.toString("base64"),
+    imageJpegBase64: canvas.jpeg.toString("base64"),
     system: prompt.system,
     prompt: prompt.user,
     timeoutMs: READER_TIMEOUT_MS,
   });
   const parsed = parseReaderReply(text, form);
-  const photoBox = parsed.photoBox ? normalizeBox(parsed.photoBox, sent.width, sent.height) : null;
-  return { ...parsed, rawPhotoBox: parsed.photoBox, photoBox, sent, ms: Math.round(performance.now() - started) };
+  const onCanvas = parsed.photoBox ? normalizeBox(parsed.photoBox, canvas.edge, canvas.edge) : null;
+  const photoBox = onCanvas ? canvasBoxToImage(onCanvas, canvas.width, canvas.height, canvas.edge) : null;
+  return {
+    ...parsed,
+    rawPhotoBox: parsed.photoBox,
+    photoBox,
+    sent: { width: canvas.width, height: canvas.height, edge: canvas.edge },
+    ms: Math.round(performance.now() - started),
+  };
 }
 
 /**
@@ -181,14 +189,6 @@ async function findPhoto(
     }
   }
   return locatePhoto(source, box, form.photo);
-}
-
-/** The size `encodeRgbJpeg` sends at, for a reply that answers in pixels of it. */
-function sentSize(width: number, height: number, maxEdge: number): { width: number; height: number } {
-  const longest = Math.max(width, height);
-  if (longest <= maxEdge) return { width, height };
-  const scale = maxEdge / longest;
-  return { width: Math.round(width * scale), height: Math.round(height * scale) };
 }
 
 function fail(status: number, code: string, error: string): Response {
