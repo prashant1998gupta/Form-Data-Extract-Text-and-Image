@@ -44,3 +44,12 @@ test("the hospital form asks for its consent date but never a signature", () => 
   assert.ok(user.includes('consentDate — "Date"'));
   assert.doesNotMatch(user, /- [a-zA-Z]+ — "[^"]*[Ss]ignature/);
 });
+
+test("the reader is asked where the photograph is, in thousandths, and the skeleton carries the slot", () => {
+  assert.match(READER_SYSTEM_PROMPT, /"photo" is its bounding box \[x1, y1, x2, y2\]/);
+  assert.match(READER_SYSTEM_PROMPT, /0 to 1000/);
+  assert.match(READER_SYSTEM_PROMPT, /null when no photograph/);
+  const { user } = buildReaderPrompt(SCHOOL_FORM);
+  const skeleton = JSON.parse(user.split("\n").at(-1)!) as { photo: unknown };
+  assert.ok("photo" in skeleton);
+});

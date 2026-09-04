@@ -132,3 +132,21 @@ test("an object where a string belongs is treated as unreadable, not saved as JS
   assert.equal(parsed.values.patientName, "");
   assert.deepEqual(parsed.unreadable, ["patientName"]);
 });
+
+test("the photo box is read in the shapes a model reaches for, and is null otherwise", () => {
+  const withBox = (photo: unknown) => JSON.stringify({ readable: true, photo, fields: { patientName: "Ravi" } });
+  assert.deepEqual(parseReaderReply(withBox([792, 30, 959, 181]), HOSPITAL_FORM).photoBox, [792, 30, 959, 181]);
+  assert.deepEqual(parseReaderReply(withBox({ x1: 792, y1: 30, x2: 959, y2: 181 }), HOSPITAL_FORM).photoBox, [792, 30, 959, 181]);
+  assert.deepEqual(parseReaderReply(withBox({ left: 792, top: 30, right: 959, bottom: 181 }), HOSPITAL_FORM).photoBox, [792, 30, 959, 181]);
+  assert.deepEqual(parseReaderReply(withBox({ x: 792, y: 30, width: 167, height: 151 }), HOSPITAL_FORM).photoBox, [792, 30, 959, 181]);
+  assert.deepEqual(parseReaderReply(withBox({ bbox_2d: [792, 30, 959, 181] }), HOSPITAL_FORM).photoBox, [792, 30, 959, 181]);
+  assert.deepEqual(parseReaderReply(withBox("[792, 30, 959, 181]"), HOSPITAL_FORM).photoBox, [792, 30, 959, 181]);
+  assert.deepEqual(parseReaderReply(withBox(["792", "30", "959", "181"]), HOSPITAL_FORM).photoBox, [792, 30, 959, 181]);
+  assert.equal(parseReaderReply(withBox(null), HOSPITAL_FORM).photoBox, null);
+  assert.equal(parseReaderReply(withBox("none"), HOSPITAL_FORM).photoBox, null);
+  assert.equal(parseReaderReply(withBox([1, 2, 3]), HOSPITAL_FORM).photoBox, null);
+  assert.equal(parseReaderReply(withBox({ x1: "a", y1: 1, x2: 2, y2: 3 }), HOSPITAL_FORM).photoBox, null);
+  assert.equal(parseReaderReply(JSON.stringify({ readable: true, fields: {} }), HOSPITAL_FORM).photoBox, null);
+  // An unreadable page carries no box, whatever the model put there.
+  assert.equal(parseReaderReply(JSON.stringify({ readable: false, photo: [1, 2, 3, 4], fields: {} }), HOSPITAL_FORM).photoBox, null);
+});

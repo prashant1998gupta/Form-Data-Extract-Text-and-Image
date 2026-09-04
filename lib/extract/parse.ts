@@ -29,6 +29,12 @@ export interface ParsedReading {
   readonly notInOptions: readonly string[];
   /** How many values are non-empty. */
   readonly filled: number;
+  /**
+   * Where the reader saw the pasted photograph: four numbers, x1 y1 x2 y2, in
+   * whatever scale the model used (the prompt asks for thousandths of the
+   * image). Null when it saw none or answered in a shape that is not a box.
+   */
+  readonly photoBox: readonly [number, number, number, number] | null;
 }
 
 export class ReplyFormatError extends Error {
@@ -73,7 +79,45 @@ export function parseReaderReply(text: string, form: FormDefinition): ParsedRead
   }
 
   const filled = Object.values(values).filter((value) => value !== "").length;
-  return { readable, values, unreadable, notInOptions, filled };
+  const photoBox = readable ? parseBox(object.photo ?? object.photoBox ?? object.photo_box ?? source.photo) : null;
+  return { readable, values, unreadable, notInOptions, filled, photoBox };
+}
+
+/**
+ * A bounding box in any of the shapes a model reaches for: `[x1, y1, x2, y2]`,
+ * `{x1, y1, x2, y2}`, `{left, top, right, bottom}`, `{x, y, width, height}`,
+ * Qwen's `{bbox_2d: [...]}`, or any of those as a string. Anything else is no
+ * box — never a guess.
+ */
+export function parseBox(raw: unknown): readonly [number, number, number, number] | null {
+  if (raw === null || raw === undefined || raw === "" || raw === false) return null;
+  if (typeof raw === "string") {
+    try {
+      return parseBox(JSON.parse(raw));
+    } catch {
+      const numbers = raw.match(/-?\d+(?:\.\d+)?/g)?.map(Number);
+      return numbers && numbers.length === 4 ? asBox(numbers) : null;
+    }
+  }
+  if (Array.isArray(raw)) return raw.length === 4 ? asBox(raw.map(Number)) : null;
+  if (!isRecord(raw)) return null;
+  for (const nested of ["bbox_2d", "bbox", "box", "photo"]) {
+    if (nested in raw) return parseBox(raw[nested]);
+  }
+  const n = (key: string) => (typeof raw[key] === "number" || typeof raw[key] === "string" ? Number(raw[key]) : Number.NaN);
+  if ("x1" in raw) return asBox([n("x1"), n("y1"), n("x2"), n("y2")]);
+  if ("left" in raw) return asBox([n("left"), n("top"), n("right"), n("bottom")]);
+  if ("x" in raw) {
+    const width = "width" in raw ? n("width") : n("w");
+    const height = "height" in raw ? n("height") : n("h");
+    return asBox([n("x"), n("y"), n("x") + width, n("y") + height]);
+  }
+  return null;
+}
+
+function asBox(numbers: number[]): readonly [number, number, number, number] | null {
+  if (numbers.length !== 4 || numbers.some((value) => !Number.isFinite(value))) return null;
+  return [numbers[0]!, numbers[1]!, numbers[2]!, numbers[3]!];
 }
 
 /**

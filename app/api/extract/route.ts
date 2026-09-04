@@ -6,14 +6,14 @@ import { ProviderError, type TextProvider } from "@/lib/extract/provider-types";
 import { readWithRetry, resolveReader } from "@/lib/extract/reader";
 import { admitReaderScan, scansPerMinute } from "@/lib/extract/throttle";
 import { formById, type FormDefinition } from "@/lib/forms/definitions";
-import { cropPhoto, rectifyCapture, type RectifiedCapture } from "@/lib/photo/crop-photo";
-import { encodeRgbJpeg, ImageDecodeError } from "@/lib/vision/io";
+import { locatePhoto, normalizeBox, type LocatedPhoto } from "@/lib/photo/locate-photo";
+import { decodeFullRgb, decodeImage, encodeRgbJpeg, ImageDecodeError, type DecodedImage } from "@/lib/vision/io";
 
 export const runtime = "nodejs";
 /**
- * Page straightening and photo detection are CPU-bound and run in-process, and
- * the reader is a network round trip on top. The default 10 s ceiling is too
- * tight to be safe, and a timeout here looks to the person like a broken app.
+ * Decoding a phone photo and measuring the photograph are CPU-bound and run
+ * in-process, and the reader is a network round trip on top. The default 10 s
+ * ceiling is too tight to be safe, and a timeout here looks like a broken app.
  */
 export const maxDuration = 60;
 
@@ -25,18 +25,19 @@ export const maxDuration = 60;
 const MAX_BYTES = 25 * 1024 * 1024;
 
 /**
- * The page image the model is shown: the straightened page at 2000 px on its
- * long edge — about 170 dpi of paper, comfortably legible for handwriting —
- * encoded once for the request. Well inside Groq's 4 MB base64 limit.
+ * The picture the model is shown: the capture as taken, at 2000 px on its long
+ * edge — comfortably legible for handwriting, well inside Groq's 4 MB base64
+ * limit. Not straightened first: the model reads a tilted page fine, and the
+ * box it returns for the photograph must refer to the same frame the crop is
+ * cut from, which is this one.
  */
 const READER_IMAGE_EDGE = 2000;
 const READER_TIMEOUT_MS = 40_000;
 
 /**
- * One scan: the straightened page goes to the vision model with the form's
- * field list, while the photograph is measured and cut locally. The two run
- * concurrently — one is network wait, the other is CPU — and neither reads
- * the other's output.
+ * One scan: the capture goes to the vision model with the form's field list;
+ * the reply carries every field and where the pasted photograph is; the
+ * photograph is then cut from the capture there.
  *
  * NOTHING IS PERSISTED. The reply carries values and a crop; saving is a
  * separate, explicit action on the scan screen after a person has looked.
@@ -79,18 +80,25 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const bytes = new Uint8Array(await file.arrayBuffer());
-  let capture: RectifiedCapture;
+  const timings: Record<string, number> = {};
+  let decoded: DecodedImage;
   try {
-    capture = await rectifyCapture(bytes, form.page);
+    const started = performance.now();
+    decoded = await decodeImage(bytes);
+    timings.decode = Math.round(performance.now() - started);
   } catch (error) {
     if (error instanceof ImageDecodeError) return fail(422, error.code, error.message);
-    console.error("capture could not be prepared", error);
-    return fail(500, "extraction_failed", "The photo could not be processed. Try photographing the form again with the whole page in frame.");
+    console.error("capture could not be decoded", error);
+    return fail(500, "extraction_failed", "The photo could not be processed. Try photographing the form again.");
   }
 
   try {
-    const [reading, cropped] = await Promise.all([readPage(capture, form, reader.provider), cropPhoto(capture, form.photo)]);
-    const photo = cropped.photo;
+    const reading = await readCapture(decoded, form, reader.provider);
+    timings.read = reading.ms;
+
+    const started = performance.now();
+    const photo = await findPhoto(bytes, decoded, reading.photoBox, form);
+    timings.photo = Math.round(performance.now() - started);
 
     return Response.json(
       {
@@ -108,12 +116,12 @@ export async function POST(request: Request): Promise<Response> {
               height: photo.height,
               confidence: photo.confidence,
               needsReview: photo.needsReview,
+              method: photo.method,
               detail: photo.detail,
             }
           : { found: false, reason: photo.reason, detail: photo.detail },
-        page: { method: capture.page.method, confidence: capture.page.confidence, isForm: cropped.formPresence.recognised },
         reader: { provider: reader.provider.name, model: reader.provider.model, ms: reading.ms },
-        timings: { ...capture.timings, ...cropped.timings, read: reading.ms },
+        timings,
       },
       { headers: { "Cache-Control": "no-store" } },
     );
@@ -130,9 +138,11 @@ export async function POST(request: Request): Promise<Response> {
   }
 }
 
-async function readPage(capture: RectifiedCapture, form: FormDefinition, provider: TextProvider) {
+/** The model reads the capture; its photo box is returned as fractions of the picture. */
+async function readCapture(decoded: DecodedImage, form: FormDefinition, provider: TextProvider) {
   const started = performance.now();
-  const jpeg = await encodeRgbJpeg(capture.rectified, READER_IMAGE_EDGE, 85);
+  const jpeg = await encodeRgbJpeg(decoded.rgb, READER_IMAGE_EDGE, 85);
+  const sent = sentSize(decoded.rgb.width, decoded.rgb.height, READER_IMAGE_EDGE);
   const prompt = buildReaderPrompt(form);
   const text = await readWithRetry(provider, {
     imageJpegBase64: jpeg.toString("base64"),
@@ -141,7 +151,40 @@ async function readPage(capture: RectifiedCapture, form: FormDefinition, provide
     timeoutMs: READER_TIMEOUT_MS,
   });
   const parsed = parseReaderReply(text, form);
-  return { ...parsed, ms: Math.round(performance.now() - started) };
+  const photoBox = parsed.photoBox ? normalizeBox(parsed.photoBox, sent.width, sent.height) : null;
+  return { ...parsed, photoBox, ms: Math.round(performance.now() - started) };
+}
+
+/**
+ * The photograph is cut from the capture at its NATIVE resolution when the
+ * working copy was downscaled — the box is in fractions, so it addresses
+ * either image — and only decoded a second time when there is a box to cut.
+ */
+async function findPhoto(
+  bytes: Uint8Array,
+  decoded: DecodedImage,
+  box: ReturnType<typeof normalizeBox>,
+  form: FormDefinition,
+): Promise<LocatedPhoto> {
+  if (!box) return locatePhoto(decoded.rgb, null, form.photo);
+  let source = decoded.rgb;
+  if (decoded.scale < 0.999) {
+    try {
+      source = await decodeFullRgb(bytes);
+    } catch {
+      // The working copy is what every crop came from before; a failed second
+      // decode costs resolution, never the photograph.
+    }
+  }
+  return locatePhoto(source, box, form.photo);
+}
+
+/** The size `encodeRgbJpeg` sends at, for a reply that answers in pixels of it. */
+function sentSize(width: number, height: number, maxEdge: number): { width: number; height: number } {
+  const longest = Math.max(width, height);
+  if (longest <= maxEdge) return { width, height };
+  const scale = maxEdge / longest;
+  return { width: Math.round(width * scale), height: Math.round(height * scale) };
 }
 
 function fail(status: number, code: string, error: string): Response {

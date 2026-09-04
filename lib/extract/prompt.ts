@@ -24,9 +24,10 @@ export const READER_SYSTEM_PROMPT = [
   '- For a field listed with choices, reply with exactly one printed choice that is ticked or written, or "" if none is.',
   "- For a checklist field, reply with an array of the printed items that are ticked, or [] if none.",
   '- For a Yes or No field, reply "Yes" or "No" as ticked or written, or "".',
-  "- Ignore signatures, thumb impressions, stamps and the pasted photograph: they are never transcribed.",
+  "- Ignore signatures, thumb impressions and stamps: they are never transcribed.",
+  '- Also find the pasted photograph of the person, if there is one. "photo" is its bounding box [x1, y1, x2, y2] as four integers from 0 to 1000: x in thousandths of the image width from the left edge, y in thousandths of the image height from the top edge. Give the box of the photograph itself, not of the printed frame around it, and give null when no photograph is pasted on the form.',
   '- If the image is not a filled-in copy of this form, or is too blurred or dark to read, set "readable" to false and leave every field "".',
-  'Reply with only one JSON object of exactly this shape: {"readable": true, "fields": {<key>: <value>, ...}} — every listed key present, no other keys.',
+  'Reply with only one JSON object of exactly this shape: {"readable": true, "photo": [x1, y1, x2, y2] or null, "fields": {<key>: <value>, ...}} — every listed key present, no other keys.',
 ].join("\n");
 
 export interface ReaderPrompt {
@@ -44,7 +45,7 @@ export function buildReaderPrompt(form: FormDefinition): ReaderPrompt {
   }
   const skeleton = Object.fromEntries(fieldsOf(form).map((field) => [field.key, field.kind === "checklist" ? [] : ""]));
   lines.push("Reply with the JSON object only, in this shape with every value filled in:");
-  lines.push(JSON.stringify({ readable: true, fields: skeleton }));
+  lines.push(JSON.stringify({ readable: true, photo: "[x1, y1, x2, y2] or null", fields: skeleton }));
   return { system: READER_SYSTEM_PROMPT, user: lines.join("\n") };
 }
 

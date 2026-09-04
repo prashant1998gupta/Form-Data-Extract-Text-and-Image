@@ -12,7 +12,7 @@
  * fills text and the person's photograph, nothing else.
  */
 
-import { A4, type PageSizeMM, type RectMM } from "../geometry/frames.ts";
+import { A4, type PageSizeMM } from "../geometry/frames.ts";
 
 export type FormId = "school" | "hospital";
 
@@ -56,18 +56,13 @@ export interface SectionDefinition {
 }
 
 /**
- * Where the photograph is on the paper, in millimetres.
- *
- * `printedBorder` is the frame the form prints; `box` is where the pasted
- * print is expected, a little larger because a photograph is glued by hand and
- * often overhangs the frame. `sizeMM` is the print size the detector judges a
- * candidate against, within `sizeTolerance` — a ratio window wide enough for a
- * passport print pasted into a larger frame.
+ * The pasted photograph: its label, and the print size the detector judges a
+ * candidate against, within `sizeTolerance` — a ratio window wide enough for
+ * a passport print pasted into a larger frame. WHERE it is on the page is not
+ * declared: the reader locates it in each capture (`lib/photo/locate-photo.ts`).
  */
 export interface PhotoDefinition {
   readonly label: string;
-  readonly box: RectMM;
-  readonly printedBorder: RectMM;
   readonly sizeMM: { readonly widthMM: number; readonly heightMM: number };
   readonly sizeTolerance: { readonly min: number; readonly max: number };
 }
@@ -94,11 +89,7 @@ export type FormValues = Readonly<Record<string, string>>;
 
 const GENDER = ["Male", "Female", "Other"] as const;
 
-/**
- * The frame is 32.5 x 46 mm at (167.6, 8.1) — measured on the PDF. A passport
- * print (35 x 45) is wider than the frame, so it is pasted over it and
- * overhangs each side by a millimetre or two; the expected box allows for that.
- */
+/** The printed frame is 32.5 x 46 mm; a passport print (35 x 45) is pasted over it. */
 export const SCHOOL_FORM: FormDefinition = {
   id: "school",
   name: "School Admission Form",
@@ -108,8 +99,6 @@ export const SCHOOL_FORM: FormDefinition = {
   thumbnail: "/forms/school.jpg",
   photo: {
     label: "Student photograph",
-    box: { xMM: 165.6, yMM: 6.1, widthMM: 36.5, heightMM: 50 },
-    printedBorder: { xMM: 167.6, yMM: 8.1, widthMM: 32.5, heightMM: 46 },
     sizeMM: { widthMM: 35, heightMM: 45 },
     sizeTolerance: { min: 0.7, max: 1.4 },
   },
@@ -203,7 +192,7 @@ export const SCHOOL_FORM: FormDefinition = {
   ],
 };
 
-/** The frame is 40 x 52 mm at (148.9, 25.6) — measured on the PDF. */
+/** The printed frame is 40 x 52 mm; the print pasted in it is usually a passport size. */
 export const HOSPITAL_FORM: FormDefinition = {
   id: "hospital",
   name: "Hospital Patient Form",
@@ -213,8 +202,6 @@ export const HOSPITAL_FORM: FormDefinition = {
   thumbnail: "/forms/hospital.jpg",
   photo: {
     label: "Patient photograph",
-    box: { xMM: 147.4, yMM: 24.1, widthMM: 43, heightMM: 55 },
-    printedBorder: { xMM: 148.9, yMM: 25.6, widthMM: 40, heightMM: 52 },
     sizeMM: { widthMM: 40, heightMM: 52 },
     sizeTolerance: { min: 0.7, max: 1.3 },
   },

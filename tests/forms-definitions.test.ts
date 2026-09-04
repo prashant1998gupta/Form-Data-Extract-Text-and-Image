@@ -43,16 +43,13 @@ for (const form of FORMS) {
     }
   });
 
-  test(`${form.id}: the photograph sits on the page, frame inside the expected box`, () => {
-    const { box, printedBorder, sizeMM, sizeTolerance } = form.photo;
-    assert.ok(box.xMM >= 0 && box.yMM >= 0);
-    assert.ok(box.xMM + box.widthMM <= form.page.widthMM);
-    assert.ok(box.yMM + box.heightMM <= form.page.heightMM);
-    assert.ok(printedBorder.xMM >= box.xMM && printedBorder.yMM >= box.yMM);
-    assert.ok(printedBorder.xMM + printedBorder.widthMM <= box.xMM + box.widthMM);
-    assert.ok(printedBorder.yMM + printedBorder.heightMM <= box.yMM + box.heightMM);
-    assert.ok(sizeMM.widthMM > 20 && sizeMM.heightMM > 25, "a print, not a stamp");
-    assert.ok(sizeTolerance.min < 1 && sizeTolerance.max > 1);
+  test(`${form.id}: the photograph declares a plausible print size and a sane tolerance`, () => {
+    const { sizeMM, sizeTolerance, label } = form.photo;
+    assert.ok(label.trim().length > 0);
+    // Passport to postcard: what a person pastes on a form.
+    assert.ok(sizeMM.widthMM >= 20 && sizeMM.widthMM <= 100, `width ${sizeMM.widthMM} mm`);
+    assert.ok(sizeMM.heightMM >= 25 && sizeMM.heightMM <= 150, `height ${sizeMM.heightMM} mm`);
+    assert.ok(sizeTolerance.min > 0 && sizeTolerance.min < 1 && sizeTolerance.max > 1 && sizeTolerance.max < 2);
   });
 
   test(`${form.id}: no signature or thumb field exists`, () => {

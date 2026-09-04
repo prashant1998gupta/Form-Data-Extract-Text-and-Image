@@ -15,6 +15,8 @@ export interface ExtractedPhoto {
   readonly dataUrl: string | null;
   readonly confidence?: number;
   readonly needsReview?: boolean;
+  /** `measured`: edges fitted and the print straightened. `located`: cut where the reader pointed. */
+  readonly method?: "measured" | "located";
   readonly detail: string;
 }
 
