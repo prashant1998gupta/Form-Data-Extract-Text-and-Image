@@ -44,13 +44,32 @@ test("a hint on the print is measured to its edges and delivered upright", async
   assert.ok(result.png.length > 0);
 });
 
-test("a hint a few per cent off, or drawn generous, still measures the print inside it", async () => {
+/** Overlap of the delivered crop's source rectangle with the print on the paper. */
+function overlapWithPrint(result: Awaited<ReturnType<typeof locatePhoto>>, photo: Rect): number {
+  if (!result.found) return 0;
+  const a = result.sourceRect;
+  const x1 = Math.max(a.x, photo.x);
+  const y1 = Math.max(a.y, photo.y);
+  const x2 = Math.min(a.x + a.width, photo.x + photo.width);
+  const y2 = Math.min(a.y + a.height, photo.y + photo.height);
+  const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+  return inter / (a.width * a.height + photo.width * photo.height - inter);
+}
+
+test("a hint a few per cent off, or drawn generous, still delivers the print inside it", async () => {
   const { rgb, truth } = renderSyntheticForm({ withThumb: false });
   assert.ok(truth.photo);
-  const shifted = await locatePhoto(rgb, hintFor(truth.photo, rgb, { left: 0.08, top: 0.08, right: 0.08, bottom: 0.08 }), PASSPORT);
-  assert.ok(shifted.found && shifted.method === "measured", shifted.found ? shifted.method : shifted.detail);
-  const generous = await locatePhoto(rgb, hintFor(truth.photo, rgb, { left: -0.2, top: -0.2, right: 0.2, bottom: 0.2 }), PASSPORT);
-  assert.ok(generous.found && generous.method === "measured", generous.found ? generous.method : generous.detail);
+  // Measured or cut, what is delivered must be the print: a crop that misses
+  // a quarter of it, or takes in as much paper again, is not.
+  for (const [label, edges] of [
+    ["shifted", { left: 0.08, top: 0.08, right: 0.08, bottom: 0.08 }],
+    ["generous", { left: -0.2, top: -0.2, right: 0.2, bottom: 0.2 }],
+  ] as const) {
+    const result = await locatePhoto(rgb, hintFor(truth.photo, rgb, edges), PASSPORT);
+    assert.ok(result.found, `${label}: ${result.found ? "" : result.detail}`);
+    const overlap = overlapWithPrint(result, truth.photo);
+    assert.ok(overlap >= 0.7, `${label}: the crop overlaps the print by only ${overlap.toFixed(2)} (${result.found ? result.method : ""})`);
+  }
 });
 
 test("no hint means no photograph, in words", async () => {
@@ -89,10 +108,14 @@ test("a hint half a print-width off — the reader's real precision — still fi
   assert.ok(truth.photo);
   // Left by half a width: the worst the model has done on a square canvas.
   const left = await locatePhoto(rgb, hintFor(truth.photo, rgb, { left: -0.5, right: -0.5 }), PASSPORT);
-  assert.ok(left.found && left.method === "measured", left.found ? left.method : left.detail);
+  assert.ok(left.found, left.found ? "" : left.detail);
+  const overlapLeft = overlapWithPrint(left, truth.photo);
+  assert.ok(overlapLeft >= 0.7, `left: overlap ${overlapLeft.toFixed(2)}`);
   // Down and slightly small.
   const down = await locatePhoto(rgb, hintFor(truth.photo, rgb, { top: 0.6, bottom: 0.45 }), PASSPORT);
-  assert.ok(down.found && down.method === "measured", down.found ? down.method : down.detail);
+  assert.ok(down.found, down.found ? "" : down.detail);
+  const overlapDown = overlapWithPrint(down, truth.photo);
+  assert.ok(overlapDown >= 0.7, `down: overlap ${overlapDown.toFixed(2)}`);
 });
 
 test("a hint with nothing photograph-like within reach finds nothing, in words", async () => {

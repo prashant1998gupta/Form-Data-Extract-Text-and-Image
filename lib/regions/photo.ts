@@ -83,6 +83,16 @@ export interface PhotoDetectionInput {
   readonly pxPerMM: number;
   /** The pre-printed "Affix Photo" rectangle, if the template records one. */
   readonly printedBorder?: Rect;
+  /**
+   * How much stronger the printed border's edge must be than an inner
+   * parallel candidate to keep the fit. Defaults to the measured value in
+   * `params.ts`; a caller that has already established the fitted rectangle
+   * IS the frame — because there was blank paper just inside it — raises it,
+   * so the print's fainter edge inside wins.
+   */
+  readonly printedBorderMargin?: number;
+  /** How far a fitted edge may lie from the declared border to count as it, in millimetres. Defaults to `params.ts`. */
+  readonly printedBorderMM?: number;
   /** Fraction of the whole page carrying colour. Below ~2 %, chroma features are dropped. */
   readonly pageSaturatedFraction: number;
   /**
@@ -534,7 +544,7 @@ function fitEdge(
   if (!input.printedBorder) return { fit: best.fit, thinFraction: bestThin };
 
   const bestOnBorder = distanceToRectEdge(input.printedBorder, side, best.fit.line);
-  if (bestOnBorder > P.printedBorderMM * input.pxPerMM) return { fit: best.fit, thinFraction: bestThin };
+  if (bestOnBorder > (input.printedBorderMM ?? P.printedBorderMM) * input.pxPerMM) return { fit: best.fit, thinFraction: bestThin };
 
   const separationPx = P.parallelCandidateMM * input.pxPerMM;
   const centre = { x: expected.x + expected.width / 2, y: expected.y + expected.height / 2 };
@@ -547,7 +557,7 @@ function fitEdge(
     // Must be inner, and close enough to be the same feature seen twice.
     if (otherDepth >= bestDepth || bestDepth - otherDepth > separationPx) continue;
     // The border candidate keeps the edge only if it is decisively stronger.
-    if (best.fit.meanResponse >= other.fit.meanResponse * P.printedBorderMargin) continue;
+    if (best.fit.meanResponse >= other.fit.meanResponse * (input.printedBorderMargin ?? P.printedBorderMargin)) continue;
     return { fit: other.fit, preferredInner: true, thinFraction: thinFraction(other.fit.line, samples, tolerancePx) };
   }
 

@@ -161,6 +161,13 @@ const ANALYSIS_HINT_EDGE = 320;
 const MIN_PX_PER_MM = 1.5;
 /** How far outside a box a printed frame is assumed to run, in millimetres. */
 const FRAME_ALLOWANCE_MM = 2;
+/**
+ * When a fit has proven to be the frame: its edge must be this many times
+ * stronger than an inner one to keep it, and it counts as the declared
+ * frame from this far away — a first fit is a little rotated, and its
+ * bounds are not.
+ */
+const FRAME_REFIT = { margin: 6, toleranceMM: 1.5 };
 /** How far from a box's edges the detector may look. The reader's box gets the wider band; a block the search read out gets the narrower. */
 const HINT_EDGE_PRIOR = { sigmaMM: 4, bandMM: 8 };
 const BLOCK_EDGE_PRIOR = { sigmaMM: 2, bandMM: 4 };
@@ -168,8 +175,14 @@ const BLOCK_EDGE_PRIOR = { sigmaMM: 2, bandMM: 4 };
 const MAX_ASPECT_RATIO = 1.2;
 /** ...and from the box it was measured at by this much in area. */
 const AREA_RATIO = { min: 0.5, max: 1.6 };
-/** It must overlap the box it was measured at, and the reader's own box, at least this much. */
-const MIN_OVERLAP_WITH_BOX = 0.7;
+/**
+ * It must overlap the box it was measured at — a block the search read out
+ * to the print's extent, or the reader's own rough box, which a correct
+ * print of a different shape can only overlap by two thirds — and the
+ * reader's box, at least this much.
+ */
+const MIN_OVERLAP_WITH_BLOCK = 0.7;
+const MIN_OVERLAP_WITH_ROUGH_BOX = 0.45;
 const MIN_OVERLAP_WITH_HINT = 0.25;
 /** Among accepted measurements, agreement with the reader's box counts this much beside the detector's confidence. */
 const HINT_AGREEMENT_WEIGHT = 0.3;
@@ -216,7 +229,7 @@ export async function locatePhoto(
   options.debug?.("analysis", { roi: analysis.roi, step: analysis.step, cleaned: analysis.cleaned, pxPerMM: analysis.pxPerMM });
 
   // 1. Where the reader pointed.
-  const atHint = await measureAt(analysis, hint, spec, options, "where the reader pointed", HINT_EDGE_PRIOR);
+  const atHint = await measureAt(analysis, hint, spec, options, "where the reader pointed", HINT_EDGE_PRIOR, MIN_OVERLAP_WITH_ROUGH_BOX);
   options.debug?.("hint", { rect: hint, ...(atHint.found ? { measured: atHint.photo.sourceRect } : { refused: atHint.detail }) });
   if (atHint.found) return atHint.photo;
 
@@ -229,7 +242,7 @@ export async function locatePhoto(
   let best: { photo: LocatedPhoto & { found: true }; merit: number } | null = null;
   const merit = (photo: LocatedPhoto & { found: true }) => photo.confidence + HINT_AGREEMENT_WEIGHT * iou(photo.sourceRect, hint);
   for (const candidate of search.candidates.slice(0, MAX_MEASURED_CANDIDATES)) {
-    const attempt = await measureAt(analysis, candidate.rect, spec, options, "at a block near where the reader pointed", BLOCK_EDGE_PRIOR);
+    const attempt = await measureAt(analysis, candidate.rect, spec, options, "at a block near where the reader pointed", BLOCK_EDGE_PRIOR, MIN_OVERLAP_WITH_BLOCK);
     options.debug?.("candidate", {
       rect: candidate.rect,
       ...(attempt.found ? { measured: attempt.photo.sourceRect, confidence: attempt.photo.confidence } : { refused: attempt.detail }),
@@ -333,13 +346,14 @@ async function measureAt(
   options: LocateOptions,
   stage: string,
   prior: { readonly sigmaMM: number; readonly bandMM: number },
+  minOverlapWithBox: number,
 ): Promise<Measurement> {
   const { cleaned, cleanChannels, pxPerMM } = analysis;
   const expected = analysis.toAnalysis(rect);
   const hintA = analysis.toAnalysis(analysis.hint);
 
   try {
-    const detect = (printedBorder: Rect) =>
+    const detect = (printedBorder: Rect, refit?: { margin: number; toleranceMM: number }) =>
       detectPhoto({
         lab: cleanChannels.lab,
         texture: cleanChannels.texture,
@@ -353,6 +367,8 @@ async function measureAt(
         sizeTolerance: { min: 0.6, max: 1.7 },
         pxPerMM,
         printedBorder,
+        printedBorderMargin: refit?.margin,
+        printedBorderMM: refit?.toleranceMM,
         pageSaturatedFraction: cleanChannels.saturatedFraction,
         prior,
       });
@@ -382,15 +398,23 @@ async function measureAt(
     // right to a millimetre. Here the box is a hint and the neighbourhood is
     // a raw capture, so a fitted quad is checked against what a print pasted
     // where the hint says could possibly look like before it is believed.
-    let doubt = whyNotThePrint(cleaned, detection.quad, expected, hintA, spec, cleanChannels.paper);
+    let doubt = whyNotThePrint(cleaned, detection.quad, expected, hintA, spec, cleanChannels.paper, minOverlapWithBox);
     if (doubt && doubt.includes("blank paper just inside")) {
-      const again = detect(quadBounds(detection.quad));
-      if (again.found) {
-        const doubtAgain = whyNotThePrint(cleaned, again.quad, expected, hintA, spec, cleanChannels.paper);
-        if (!doubtAgain) {
-          detection = again;
-          doubt = null;
-        }
+      // The frame's printed line is a stronger step than a pale print's
+      // edge a millimetre inside it, and the detector keeps the stronger
+      // unless told the border is exactly there — which it now is.
+      const again = detect(quadBounds(detection.quad), FRAME_REFIT);
+      const doubtAgain = again.found ? whyNotThePrint(cleaned, again.quad, expected, hintA, spec, cleanChannels.paper, minOverlapWithBox) : null;
+      options.debug?.("refit", {
+        stage,
+        rect,
+        quad: again.found ? analysis.toSourceQuad(again.quad) : null,
+        verdict: again.found ? (doubtAgain ?? "accepted") : again.detail,
+        edges: again.edges.map((edge) => `${edge.side}:${edge.fitted ? "fitted" : "unfitted"}${edge.preferredInner ? "+inner" : ""}`).join(" "),
+      });
+      if (again.found && !doubtAgain) {
+        detection = again;
+        doubt = null;
       }
     }
     report(doubt ?? "accepted", detection.quad);
@@ -470,6 +494,7 @@ function whyNotThePrint(
   hint: Rect,
   spec: PhotoDefinition,
   paper: { readonly paperLevel: number; readonly sigmaLightness: number },
+  minOverlapWithBox: number,
 ): string | null {
   const bounds = quadBounds(quad);
   const fitted = minAreaRect(quadPoints(quad));
@@ -487,7 +512,7 @@ function whyNotThePrint(
     return `the fitted print is ${Math.round(areaRatio * 100)} % of the box it was measured at in area`;
   }
   const overlapBox = iou(bounds, expected);
-  if (overlapBox < MIN_OVERLAP_WITH_BOX) {
+  if (overlapBox < minOverlapWithBox) {
     return `the fitted print overlaps the box it was measured at by only ${Math.round(overlapBox * 100)} %`;
   }
   const overlapHint = iou(bounds, hint);
@@ -552,7 +577,9 @@ function paperInside(patch: Rgb, quad: Quad, paper: { readonly paperLevel: numbe
  * underline. The first is a dark region that reaches the patch's border;
  * the second is what `prepareChannels` already isolates as `rules`. Both are
  * filled with the paper's own colour, so the detector that fits the print's
- * edges never sees them.
+ * edges never sees them. (The photo frame's own thin line, a millimetre
+ * outside a print, is left alone: painting thin ink out took the print's
+ * own edge shadow with it and made every measurement worse.)
  *
  * Dark regions that reach the border are kept only if they run along a
  * whole side or wrap a corner — a print's dark clothing, cut through by a
@@ -704,49 +731,55 @@ interface Search {
  */
 function searchNear(analysis: Analysis, spec: PhotoDefinition, options: LocateOptions): Search {
   const { patch, pxPerMM, channels } = analysis;
-  const { lab, texture, paper } = channels;
+  const { lab } = channels;
   const nothing: Search = { candidates: [], hint: { content: 0, photoLike: false } };
 
   const tile = Math.max(3, Math.round(1.8 * pxPerMM));
   const columns = Math.floor(patch.width / tile);
   const rows = Math.floor(patch.height / tile);
   if (columns < 4 || rows < 4) return nothing;
-  const paperBelow = paper.paperLevel - Math.max(12, 3 * paper.sigmaLightness);
-  const inkBelow = 0.35 * paper.paperLevel;
-  const strokeBelow = 0.6 * paper.paperLevel;
-  const chromaAbove = 6 + 3 * paper.sigmaChroma;
-  const textureAbove = 2.2 * Math.max(0.25, paper.textureLevel);
+
+  // Paper is measured where it is: in a ring around the hint, on the raw
+  // pixels. The flattened channels and page-wide paper statistics the
+  // detector uses proved fragile here — a fill, a shadow or the desk in the
+  // region shifts them, and then a whole page reads as content or a pale
+  // backdrop reads as paper. The brightest half of the ring is paper on any
+  // form; its median colour and spread are the reference.
+  const hintA = analysis.toAnalysis(analysis.hint);
+  const local = localPaper(patch, hintA, analysis);
+  const inkBelow = 0.35 * local.luminance;
+  const differs = Math.max(18, 5 * local.spread);
   const content = new Uint8Array(columns * rows);
   const veryDark = new Uint8Array(columns * rows);
   for (let ty = 0; ty < rows; ty += 1) {
     for (let tx = 0; tx < columns; tx += 1) {
       let n = 0;
-      let paperLike = 0;
       let dark = 0;
-      let strokes = 0;
-      let coloured = 0;
-      let sumTexture = 0;
+      let unlikePaper = 0;
       for (let y = ty * tile; y < (ty + 1) * tile; y += 1) {
         const row = y * patch.width;
         for (let x = tx * tile; x < (tx + 1) * tile; x += 1) {
-          const l = lab.L.data[row + x]!;
-          const c = lab.chroma.data[row + x]!;
+          const p = (row + x) * 3;
+          const r = patch.data[p]!;
+          const g = patch.data[p + 1]!;
+          const b = patch.data[p + 2]!;
+          const l = 0.299 * r + 0.587 * g + 0.114 * b;
           n += 1;
-          if (c > chromaAbove) coloured += 1;
-          if (l < inkBelow) dark += 1;
-          else if (l >= paperBelow && c <= chromaAbove) paperLike += 1;
-          if (l < strokeBelow) strokes += 1;
-          sumTexture += texture.data[row + x]!;
+          if (l < inkBelow) {
+            dark += 1;
+          } else if (Math.hypot(r - local.r, g - local.g, b - local.b) > differs) {
+            unlikePaper += 1;
+          }
         }
       }
-      const mid = (n - paperLike - dark) / n;
+      // Continuous tone — neither paper nor ink — is what a photograph is
+      // made of; a text tile is paper with a few dark strokes and fails both.
       const isDark = dark / n >= 0.6;
-      const grainy = strokes / n < 0.02 && sumTexture / n > textureAbove;
-      content[ty * columns + tx] = mid >= 0.45 || coloured / n >= 0.4 || isDark || grainy ? 1 : 0;
+      content[ty * columns + tx] = unlikePaper / n >= 0.45 || isDark ? 1 : 0;
       veryDark[ty * columns + tx] = isDark ? 1 : 0;
     }
   }
-  options.debug?.("tiles", { roi: analysis.roi, step: analysis.step, tile, columns, rows, content, veryDark, paper });
+  options.debug?.("tiles", { roi: analysis.roi, step: analysis.step, tile, columns, rows, content, veryDark, paper: local });
 
   const integral = integralImage(content, columns, rows);
   const integralDark = integralImage(veryDark, columns, rows);
@@ -765,7 +798,6 @@ function searchNear(analysis: Analysis, spec: PhotoDefinition, options: LocateOp
     return inner.count / Math.max(1, inner.area);
   };
 
-  const hintA = analysis.toAnalysis(analysis.hint);
   const hintTiles = { x: hintA.x / tile, y: hintA.y / tile, w: hintA.width / tile, h: hintA.height / tile };
   const hintCx = hintTiles.x + hintTiles.w / 2;
   const hintCy = hintTiles.y + hintTiles.h / 2;
@@ -873,6 +905,39 @@ function extentOf(
   return { x, y, w, h };
 }
 
+/**
+ * The paper around the hint: the median colour of the brighter half of a
+ * ring around it, and the spread of luminance within that half. Pixels the
+ * analysis region only has by repeating the source's edge are left out.
+ */
+function localPaper(patch: Rgb, hint: Rect, analysis: Analysis): { r: number; g: number; b: number; luminance: number; spread: number } {
+  const inner = pad(hint, 0.25 * hint.width, 0.25 * hint.height);
+  const outer = pad(hint, 0.9 * hint.width, 0.9 * hint.height);
+  const sourceBounds = analysis.toAnalysis({ x: 0, y: 0, width: analysis.source.width, height: analysis.source.height });
+  const samples: { r: number; g: number; b: number; l: number }[] = [];
+  for (let y = Math.max(0, outer.y); y < Math.min(patch.height, outer.y + outer.height); y += 2) {
+    for (let x = Math.max(0, outer.x); x < Math.min(patch.width, outer.x + outer.width); x += 2) {
+      if (x >= inner.x && x < inner.x + inner.width && y >= inner.y && y < inner.y + inner.height) continue;
+      if (x < sourceBounds.x || y < sourceBounds.y || x >= sourceBounds.x + sourceBounds.width || y >= sourceBounds.y + sourceBounds.height) continue;
+      const p = (y * patch.width + x) * 3;
+      const r = patch.data[p]!;
+      const g = patch.data[p + 1]!;
+      const b = patch.data[p + 2]!;
+      samples.push({ r, g, b, l: 0.299 * r + 0.587 * g + 0.114 * b });
+    }
+  }
+  if (samples.length < 16) return { r: 240, g: 240, b: 240, luminance: 240, spread: 4 };
+  samples.sort((a, b) => a.l - b.l);
+  const bright = samples.slice(Math.floor(samples.length / 2));
+  const median = (values: number[]) => values.sort((a, b) => a - b)[Math.floor(values.length / 2)]!;
+  const r = median(bright.map((v) => v.r));
+  const g = median(bright.map((v) => v.g));
+  const b = median(bright.map((v) => v.b));
+  const luminance = median(bright.map((v) => v.l));
+  const spread = median(bright.map((v) => Math.abs(v.l - luminance)));
+  return { r, g, b, luminance, spread };
+}
+
 function integralImage(mask: Uint8Array, width: number, height: number): Float64Array {
   const stride = width + 1;
   const out = new Float64Array(stride * (height + 1));
@@ -960,23 +1025,24 @@ function extractPatch(source: Rgb, rect: Rect): Rgb {
 }
 
 /**
- * Copies a rectangle out of the source at every `step`-th pixel, with the
- * part that lies beyond the source filled in white — a print near the
- * page's corner still gets a region of the size the analysis needs.
+ * Copies a rectangle out of the source at every `step`-th pixel. Where the
+ * rectangle reaches past the source — a print near the page's corner still
+ * needs a region of the size the analysis wants — the source's edge pixels
+ * are repeated outward. Filling with white instead put a step between the
+ * paper and the fill that the illumination flattening then took for a
+ * shadow, and read the whole page as darker than paper.
  */
 function extractPatchPadded(source: Rgb, rect: Rect, step: number): Rgb {
   const channels = source.channels;
   const width = Math.max(1, Math.floor(rect.width / step));
   const height = Math.max(1, Math.floor(rect.height / step));
-  const data = new Uint8ClampedArray(width * height * 3).fill(255);
+  const data = new Uint8ClampedArray(width * height * 3);
   for (let row = 0; row < height; row += 1) {
-    const sy = rect.y + row * step;
-    if (sy < 0 || sy >= source.height) continue;
+    const sy = Math.min(source.height - 1, Math.max(0, rect.y + row * step));
     const sourceRow = sy * source.width;
     const targetRow = row * width;
     for (let column = 0; column < width; column += 1) {
-      const sx = rect.x + column * step;
-      if (sx < 0 || sx >= source.width) continue;
+      const sx = Math.min(source.width - 1, Math.max(0, rect.x + column * step));
       const s = (sourceRow + sx) * channels;
       const t = (targetRow + column) * 3;
       data[t] = source.data[s]!;
