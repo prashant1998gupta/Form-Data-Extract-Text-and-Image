@@ -85,8 +85,11 @@ URL for a person's face ever reaches a browser.
 
 There are no accounts yet. The endpoints are unauthenticated and the table's
 policies let the anon key read, write and delete — the honest posture for a
-demo, and the first thing to change before a public deployment. The older
-`forms` and `records` tables belong to the previous product and are untouched.
+demo, and the first thing to change before a public deployment. The previous
+product's `forms` and `records` tables, its files and its `captures` bucket
+were retired on 2026-09-04 (`20260904130000_retire_previous_product.sql` and
+`20260904140000_retire_previous_product_cleanup.sql`); only `scans` and the
+`crops` bucket remain.
 
 ---
 
