@@ -22,6 +22,13 @@ export interface GroqOptions {
   readonly apiKey: string;
   readonly model?: string;
   readonly baseUrl?: string;
+  /**
+   * How much the model may "think" before answering. Off by default: a
+   * transcription has nothing to deliberate, and a reasoning model that
+   * thinks in JSON mode can spend the entire output budget on thoughts and
+   * hand Groq an empty reply — which Groq then refuses as invalid JSON.
+   */
+  readonly reasoning?: "none" | "default";
   /** Injection point for tests. Defaults to the platform fetch. */
   readonly fetchImpl?: typeof fetch;
 }
@@ -48,6 +55,7 @@ export function groqProvider(options: GroqOptions): TextProvider {
             // Deterministic-as-available: transcription has one right answer.
             temperature: 0,
             max_tokens: request.maxTokens ?? 4096,
+            reasoning_effort: options.reasoning ?? "none",
             response_format: { type: "json_object" },
             messages: [
               { role: "system", content: request.system },

@@ -70,6 +70,9 @@ test("the Groq request carries the key, the model, JSON mode and the page image"
   assert.equal(body.temperature, 0);
   assert.equal(body.max_tokens, 4096);
   assert.equal(body.response_format.type, "json_object");
+  // Thinking is off: in JSON mode a reasoning model can spend the whole
+  // budget on thoughts and hand back an empty reply.
+  assert.equal((body as { reasoning_effort?: string }).reasoning_effort, "none");
   assert.equal(body.messages[0].role, "system");
   assert.equal(body.messages[1].content[0].image_url.url, "data:image/jpeg;base64,aGVsbG8=");
   assert.equal(body.messages[1].content[1].text, request.prompt);

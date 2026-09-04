@@ -5,6 +5,7 @@
  *   GROQ_API_KEY   enables reading (free tier at console.groq.com/keys)
  *   GROQ_MODEL     overrides the default vision model
  *   GROQ_BASE_URL  points at a Groq-compatible endpoint
+ *   GROQ_REASONING "default" lets a reasoning model think first; off otherwise
  *
  * With no key the reader is off, and the scan endpoint says so in words the
  * operator can act on rather than pretending the feature does not exist.
@@ -27,6 +28,7 @@ export function resolveReader(env: Record<string, string | undefined>): Resolved
       apiKey,
       model: env.GROQ_MODEL?.trim() || undefined,
       baseUrl: env.GROQ_BASE_URL?.trim() || undefined,
+      reasoning: env.GROQ_REASONING?.trim() === "default" ? "default" : "none",
     }),
   };
 }
