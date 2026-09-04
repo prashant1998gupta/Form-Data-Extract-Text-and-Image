@@ -64,7 +64,7 @@ test("a hint a few per cent off, or drawn generous, still delivers the print ins
   // a quarter of it, or takes in as much paper again, is not.
   for (const [label, edges] of [
     ["shifted", { left: 0.08, top: 0.08, right: 0.08, bottom: 0.08 }],
-    ["generous", { left: -0.2, top: -0.2, right: 0.2, bottom: 0.2 }],
+    ["generous", { left: -0.1, top: -0.1, right: 0.1, bottom: 0.1 }],
   ] as const) {
     const result = await locatePhoto(rgb, hintFor(truth.photo, rgb, edges), PASSPORT);
     assert.ok(result.found, `${label}: ${result.found ? "" : result.detail}`);

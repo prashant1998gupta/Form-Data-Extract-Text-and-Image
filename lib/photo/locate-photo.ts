@@ -198,6 +198,10 @@ const MAX_MEASURED_CANDIDATES = 4;
 const MIN_CANDIDATE_CONTENT = 0.4;
 /** A block is worth cutting unmeasured only when it is plainly not paper... */
 const MIN_BLOCK_CONTENT = 0.55;
+/** The reader's own box is cut, with no block to go on, when at least this much of it is not paper — a face on a white backdrop is that little. */
+const MIN_HINT_CONTENT = 0.2;
+/** A block that spans this much of the reader's box on an axis is believed on that axis; a shorter one is merged with the box. */
+const BLOCK_SPANS_BOX = 0.8;
 /** ...and carries the tonal range of a photograph rather than a logo or a code (`toneSpread`, 0..1). */
 const MIN_BLOCK_TONE_SPREAD = 0.2;
 /** A block is cut a little generous, so a tight box does not shave the print. */
@@ -251,10 +255,25 @@ export async function locatePhoto(
   }
   if (best) return best.photo;
 
-  // 3. The best block, cut as it is — a real photograph is there by every
-  // cheap measure; what could not be established is exactly where its edges are.
+  // 3. Where the block and the reader disagree about the print's extent, the
+  // reader is usually right: a passport print's white backdrop is the same
+  // colour as the form's paper to within a couple of levels, so the block
+  // sees only the face and the clothes and comes up narrow, while the model
+  // boxes the whole print. Per axis, a block that spans most of the reader's
+  // box is believed as it is; a much shorter one is merged with the box.
+  // The detector gets one more try at that extent before it is cut as it is.
   const block = search.candidates.find((candidate) => candidate.content >= MIN_BLOCK_CONTENT && candidate.photoLike);
-  const cutRect = block?.rect ?? (search.hint.content >= MIN_BLOCK_CONTENT && search.hint.photoLike ? hint : null);
+  let cutRect: Rect | null = null;
+  if (block) {
+    cutRect = mergeExtents(block.rect, hint);
+    if (iou(cutRect, block.rect) < 0.95) {
+      const attempt = await measureAt(analysis, cutRect, spec, options, "at the print's likely extent", HINT_EDGE_PRIOR, MIN_OVERLAP_WITH_ROUGH_BOX);
+      options.debug?.("merged", { rect: cutRect, ...(attempt.found ? { measured: attempt.photo.sourceRect } : { refused: attempt.detail }) });
+      if (attempt.found) return attempt.photo;
+    }
+  } else if (search.hint.content >= MIN_HINT_CONTENT && search.hint.photoLike) {
+    cutRect = hint;
+  }
   if (!cutRect) {
     return { found: false, reason: "not_found", detail: "no photograph was found near where the reader pointed" };
   }
@@ -996,6 +1015,23 @@ function clip(rect: Rect, image: Rgb): Rect {
   const right = Math.max(x + 1, Math.min(image.width, rect.x + rect.width));
   const bottom = Math.max(y + 1, Math.min(image.height, rect.y + rect.height));
   return { x, y, width: right - x, height: bottom - y };
+}
+
+/**
+ * The block and the reader's box, reconciled per axis: the block where it
+ * spans most of the box, their union where it does not — which is what a
+ * pale backdrop leaves of a print in the block.
+ */
+function mergeExtents(block: Rect, hint: Rect): Rect {
+  const x = block.width >= BLOCK_SPANS_BOX * hint.width ? { x: block.x, width: block.width } : union1(block.x, block.width, hint.x, hint.width);
+  const y = block.height >= BLOCK_SPANS_BOX * hint.height ? { x: block.y, width: block.height } : union1(block.y, block.height, hint.y, hint.height);
+  return { x: x.x, y: y.x, width: x.width, height: y.width };
+}
+
+function union1(a: number, aLength: number, b: number, bLength: number): { x: number; width: number } {
+  const start = Math.min(a, b);
+  const end = Math.max(a + aLength, b + bLength);
+  return { x: start, width: end - start };
 }
 
 function quadBounds(quad: Quad): Rect {
