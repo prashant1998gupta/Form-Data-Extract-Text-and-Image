@@ -99,6 +99,9 @@ export async function POST(request: Request): Promise<Response> {
     const started = performance.now();
     const photo = await findPhoto(bytes, decoded, reading.photoBox, form);
     timings.photo = Math.round(performance.now() - started);
+    // Where the reader said the photograph was, raw and as read. Diagnostic:
+    // a crop that misses is explained by these four numbers or by nothing.
+    const hint = { raw: reading.rawPhotoBox, box: reading.photoBox, imageSize: reading.sent };
 
     return Response.json(
       {
@@ -118,8 +121,9 @@ export async function POST(request: Request): Promise<Response> {
               needsReview: photo.needsReview,
               method: photo.method,
               detail: photo.detail,
+              hint,
             }
-          : { found: false, reason: photo.reason, detail: photo.detail },
+          : { found: false, reason: photo.reason, detail: photo.detail, hint },
         reader: { provider: reader.provider.name, model: reader.provider.model, ms: reading.ms },
         timings,
       },
@@ -152,7 +156,7 @@ async function readCapture(decoded: DecodedImage, form: FormDefinition, provider
   });
   const parsed = parseReaderReply(text, form);
   const photoBox = parsed.photoBox ? normalizeBox(parsed.photoBox, sent.width, sent.height) : null;
-  return { ...parsed, photoBox, ms: Math.round(performance.now() - started) };
+  return { ...parsed, rawPhotoBox: parsed.photoBox, photoBox, sent, ms: Math.round(performance.now() - started) };
 }
 
 /**
