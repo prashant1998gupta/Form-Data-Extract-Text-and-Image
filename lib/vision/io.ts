@@ -228,13 +228,19 @@ export async function encodeRgbJpeg(image: Rgb, maxEdge?: number, quality = 82):
 
 /**
  * Encodes the image at the top-left of a SQUARE canvas of `edge` pixels,
- * padded on the right and bottom with a flat grey.
+ * scaled so its long side fills the canvas, padded along the other side
+ * with a flat grey.
  *
  * For the vision model, whose bounding boxes are asked for in thousandths of
  * the picture. On a portrait page the model was found to measure x in
  * thousandths of the HEIGHT — as if the picture had been letterboxed to a
  * square — so on a square canvas thousandths of width, thousandths of height
  * and pixels of a 1000-px copy all coincide, and its box means one thing.
+ *
+ * The picture is scaled UP as well as down. A small capture left at its own
+ * size sat in the canvas's corner with padding on two sides, and the
+ * model's box for it landed in the padding; with the picture spanning the
+ * canvas's full height the boxes were right on every capture tried.
  */
 export async function encodeRgbJpegSquare(
   image: Rgb,
@@ -243,7 +249,7 @@ export async function encodeRgbJpegSquare(
   background = { r: 118, g: 118, b: 118 },
 ): Promise<{ jpeg: Buffer; width: number; height: number; edge: number }> {
   const longest = Math.max(image.width, image.height);
-  const scale = Math.min(1, edge / longest);
+  const scale = edge / longest;
   const width = Math.max(1, Math.round(image.width * scale));
   const height = Math.max(1, Math.round(image.height * scale));
   const jpeg = await sharp(Buffer.from(image.data.buffer, image.data.byteOffset, image.data.byteLength), {

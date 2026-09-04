@@ -3,6 +3,7 @@ import test from "node:test";
 
 import type { PhotoDefinition } from "../lib/forms/definitions.ts";
 import { canvasBoxToImage, locatePhoto, normalizeBox, type NormalizedBox } from "../lib/photo/locate-photo.ts";
+import { encodeRgbJpegSquare } from "../lib/vision/io.ts";
 import type { Rect, Rgb } from "../lib/vision/types.ts";
 import { renderSyntheticForm } from "./helpers/synthetic-form.ts";
 
@@ -179,4 +180,19 @@ test("the reader's numbers are read in whatever scale it used", () => {
   assert.deepEqual(normalizeBox([959, 181, 792, 30], 1414, 2000), { x1: 0.792, y1: 0.03, x2: 0.959, y2: 0.181 });
   assert.equal(normalizeBox([500, 500, 500, 600], 1414, 2000), null);
   assert.equal(normalizeBox([Number.NaN, 0, 1, 1], 1414, 2000), null);
+});
+
+test("the square canvas scales a small capture up to fill its long side, so the box has one meaning", async () => {
+  const width = 110;
+  const height = 150;
+  const data = new Uint8ClampedArray(width * height * 3).fill(200);
+  const canvas = await encodeRgbJpegSquare({ data, width, height, channels: 3 }, 600, 80);
+  assert.equal(canvas.edge, 600);
+  assert.equal(canvas.height, 600, "the long side fills the canvas");
+  assert.equal(canvas.width, Math.round((110 / 150) * 600));
+  // And a large one is brought down to it.
+  const big = new Uint8ClampedArray(900 * 1200 * 3).fill(200);
+  const down = await encodeRgbJpegSquare({ data: big, width: 900, height: 1200, channels: 3 }, 600, 80);
+  assert.equal(down.height, 600);
+  assert.equal(down.width, 450);
 });
