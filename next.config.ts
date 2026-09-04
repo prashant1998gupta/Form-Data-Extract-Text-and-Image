@@ -14,9 +14,14 @@ import type { NextConfig } from "next";
  * scripts; removing that needs per-request nonces, which costs static
  * prerendering.
  */
+const isDevelopment = process.env.NODE_ENV === "development";
+
 const contentSecurityPolicy = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'",
+  // React's development build needs eval() for its debugging features and
+  // reports a CSP violation without it; production never uses eval, so the
+  // allowance is confined to `next dev`.
+  `script-src 'self' 'unsafe-inline'${isDevelopment ? " 'unsafe-eval'" : ""}`,
   "script-src-attr 'none'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",

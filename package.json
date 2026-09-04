@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Universal form digitization — turn handwritten paper forms into verified digital records.",
+  "description": "Photograph a filled-in form; its answers and photograph are read into a record you check and save.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -15,8 +15,6 @@
     "fixtures": "node --experimental-strip-types scripts/preview-fixture.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.122.0",
-    "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.112.3",
     "next": "16.3.2",
     "react": "19.2.8",
