@@ -202,8 +202,9 @@ export const HOSPITAL_FORM: FormDefinition = {
   thumbnail: "/forms/hospital.jpg",
   photo: {
     label: "Patient photograph",
-    sizeMM: { widthMM: 40, heightMM: 52 },
-    sizeTolerance: { min: 0.7, max: 1.3 },
+    // The frame is 40 x 52 mm; what gets pasted in it is a passport print.
+    sizeMM: { widthMM: 35, heightMM: 45 },
+    sizeTolerance: { min: 0.7, max: 1.5 },
   },
   titleKey: "patientName",
   summaryKeys: ["phone", "doctorName"],
