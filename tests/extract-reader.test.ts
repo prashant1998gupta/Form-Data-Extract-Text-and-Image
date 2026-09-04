@@ -168,3 +168,32 @@ test("readWithRetry clamps the wait to the budget it was given", async () => {
   await readWithRetry(slow, request, { maxWaitMs: 4_000, sleep: async (ms) => void waits.push(ms) });
   assert.deepEqual(waits, [4_000]);
 });
+
+test("a refusal carries Groq's own reason, so a JSON-mode failure is diagnosable", async () => {
+  const provider = groqProvider({
+    apiKey: "gsk_x",
+    fetchImpl: async () =>
+      new Response(
+        JSON.stringify({
+          error: { message: "Failed to generate JSON. Please adjust your prompt.", type: "invalid_request_error", code: "json_validate_failed", failed_generation: "{oops" },
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      ),
+  });
+  await assert.rejects(provider.read(request), (error: unknown) => {
+    assert.ok(error instanceof ProviderError);
+    assert.match(error.message, /Failed to generate JSON/);
+    assert.match(error.message, /json_validate_failed/);
+    assert.equal(error.retryable, false);
+    return true;
+  });
+});
+
+test("a refusal without a JSON body still carries the text", async () => {
+  const provider = groqProvider({ apiKey: "gsk_x", fetchImpl: async () => new Response("Bad Request: image invalid", { status: 400 }) });
+  await assert.rejects(provider.read(request), (error: unknown) => {
+    assert.ok(error instanceof ProviderError);
+    assert.match(error.message, /image invalid/);
+    return true;
+  });
+});

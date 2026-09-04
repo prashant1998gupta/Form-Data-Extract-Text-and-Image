@@ -73,7 +73,8 @@ export function groqProvider(options: GroqOptions): TextProvider {
       }
 
       if (!response.ok) {
-        throw new ProviderError(statusMessage(response.status), {
+        const refusal = await describeRefusal(response);
+        throw new ProviderError(statusMessage(response.status, refusal), {
           status: response.status,
           retryable: response.status === 429 || response.status >= 500,
           retryAfterMs: retryAfterMs(response),
@@ -124,13 +125,44 @@ function firstChoice(payload: unknown): { message?: unknown; finish_reason?: unk
   return typeof choice === "object" && choice !== null ? (choice as { message?: unknown; finish_reason?: unknown }) : null;
 }
 
-function statusMessage(status: number): string {
+/**
+ * Groq's own account of a refusal, when it gives one. A 400 in JSON mode
+ * usually means the model's reply failed JSON validation; Groq then sends
+ * the failed reply back as `failed_generation`, which is logged for the
+ * operator and never shown to the person.
+ */
+async function describeRefusal(response: Response): Promise<string | null> {
+  let text: string;
+  try {
+    text = await response.text();
+  } catch {
+    return null;
+  }
+  try {
+    const payload = JSON.parse(text) as { error?: { message?: unknown; code?: unknown; failed_generation?: unknown } };
+    const error = payload.error;
+    if (error && typeof error === "object") {
+      if (typeof error.failed_generation === "string") {
+        console.error("groq rejected the model's reply as JSON:", error.failed_generation.slice(0, 600));
+      }
+      if (typeof error.message === "string") {
+        return typeof error.code === "string" ? `${error.message} [${error.code}]` : error.message;
+      }
+    }
+  } catch {
+    // Not JSON — the text itself is the account.
+  }
+  const trimmed = text.trim().slice(0, 200);
+  return trimmed || null;
+}
+
+function statusMessage(status: number, refusal: string | null): string {
   if (status === 401 || status === 403) return "the Groq API key was refused — check GROQ_API_KEY";
   if (status === 404) return "the Groq model was not found — it may have been retired; set GROQ_MODEL";
   if (status === 413) return "the page image was too large for the reader";
   if (status === 429) return "the reader is busy right now — wait a moment and try again";
   if (status >= 500) return "the reader had a server error";
-  return `the reader refused the request (HTTP ${status})`;
+  return refusal ? `the reader refused the request (HTTP ${status}: ${refusal})` : `the reader refused the request (HTTP ${status})`;
 }
 
 /**
