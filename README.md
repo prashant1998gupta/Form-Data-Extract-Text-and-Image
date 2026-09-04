@@ -32,10 +32,13 @@ the photograph, nothing else.
    thousandths of the picture. No page straightening first: the model reads a
    tilted page on a desk as well as a flat scan, and the box refers to the
    picture as taken.
-4. **The photograph is cut, never generated.** Inside a patch around the
-   model's box, the edge-fitting detector (`lib/regions/photo.ts`) measures
-   the print's four sides and delivers it upright at print resolution. When
-   the edges cannot be measured — a tilt, a faint backdrop — the box itself is
+4. **The photograph is cut, never generated.** The model's box is good to
+   about a tenth of the picture, so it is a place to search, not a crop. In
+   a region several prints wide around it, the print is found as a block of
+   continuous tone surrounded by paper and read out to its own extent; then
+   the edge-fitting detector (`lib/regions/photo.ts`) measures its four
+   sides and delivers it upright at print resolution. When the edges cannot
+   be measured — a faint backdrop, a blurred capture — the block itself is
    cut at lower confidence and flagged; a box on blank paper is refused. The
    pixels always come from the upload (`lib/photo/locate-photo.ts`).
 5. **The record fills in.** Fields the model could not read are highlighted
@@ -139,7 +142,8 @@ the editable form, the saved list — is generated from the definition.
 - **The photograph must be visible in the picture.** It is cut where the
   model says it is; a picture that misses the top of the form yields the
   text but no photograph, and says so. A crop marked "check the crop" was cut
-  at the model's box without measured edges — look before saving.
+  around the block the search found, without measured edges — look before
+  saving.
 - **No accounts.** Anyone with the URL can scan, save, read and delete.
 - **One instance's throttle is one instance's.** Set a spend cap with Groq
   before putting a key on a public deployment.
