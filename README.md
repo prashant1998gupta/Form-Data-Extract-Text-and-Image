@@ -78,7 +78,7 @@ node --experimental-strip-types scripts/make-samples.ts   # regenerate public/sa
 ### Database
 
 The Supabase project is `formlink` (`wslxnqmfokecaowycqac`, ap-south-1).
-`supabase/migrations/20260904120000_scans.sql` creates the `scans` table and
+`supabase/migrations/20260903210818_scans.sql` creates the `scans` table and
 is applied. Photographs go to the existing private `crops` bucket under
 `scans/<id>/` and are streamed through `/api/scans/[id]/photo`, so no storage
 URL for a person's face ever reaches a browser.
@@ -87,8 +87,8 @@ There are no accounts yet. The endpoints are unauthenticated and the table's
 policies let the anon key read, write and delete — the honest posture for a
 demo, and the first thing to change before a public deployment. The previous
 product's `forms` and `records` tables, its files and its `captures` bucket
-were retired on 2026-09-04 (`20260904130000_retire_previous_product.sql` and
-`20260904140000_retire_previous_product_cleanup.sql`); only `scans` and the
+were retired on 2026-09-04 (`20260904044030_retire_previous_product.sql` and
+`20260904044112_retire_previous_product_cleanup.sql`); only `scans` and the
 `crops` bucket remain.
 
 ---
