@@ -3,9 +3,9 @@
  *
  * Groq serves open vision models over an OpenAI-shaped REST endpoint; a raw
  * fetch is the whole integration and adds no dependency. The default model is
- * `qwen/qwen3.6-27b` because it is what Groq serves for vision today — both
- * Llama 4 vision models were retired in 2026 — and `GROQ_MODEL` changes it
- * without a deploy touching this file. `GROQ_BASE_URL` points the client at a
+ * `qwen/qwen3.8-27b`, the newer of the two Qwen vision models Groq serves —
+ * both Llama 4 vision models were retired in 2026 — and `GROQ_MODEL` changes
+ * it without a deploy touching this file. `GROQ_BASE_URL` points the client at a
  * compatible endpoint (a proxy, or a local stand-in while developing).
  *
  * JSON mode (`response_format: {type: "json_object"}`) is supported with
@@ -15,7 +15,7 @@
 
 import { ProviderError, type ReadRequest, type TextProvider } from "./provider-types.ts";
 
-export const GROQ_DEFAULT_MODEL = "qwen/qwen3.6-27b";
+export const GROQ_DEFAULT_MODEL = "qwen/qwen3.8-27b";
 export const GROQ_DEFAULT_BASE_URL = "https://api.groq.com/openai/v1";
 
 export interface GroqOptions {

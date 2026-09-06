@@ -37,7 +37,7 @@ test("a key selects Groq; the model and base URL come from the environment", () 
   const resolved = resolveReader({ GROQ_API_KEY: "gsk_x", GROQ_MODEL: "some/other-model" });
   assert.equal(resolved.provider?.name, "groq");
   assert.equal(resolved.provider?.model, "some/other-model");
-  assert.equal(resolveReader({ GROQ_API_KEY: "gsk_x" }).provider?.model, "qwen/qwen3.6-27b");
+  assert.equal(resolveReader({ GROQ_API_KEY: "gsk_x" }).provider?.model, "qwen/qwen3.8-27b");
 });
 
 test("the Groq request carries the key, the model, JSON mode and the page image", async () => {
@@ -66,7 +66,7 @@ test("the Groq request carries the key, the model, JSON mode and the page image"
     response_format: { type: string };
     messages: [{ role: string; content: string }, { role: string; content: [{ image_url: { url: string } }, { text: string }] }];
   };
-  assert.equal(body.model, "qwen/qwen3.6-27b");
+  assert.equal(body.model, "qwen/qwen3.8-27b");
   assert.equal(body.temperature, 0);
   assert.equal(body.max_tokens, 4096);
   assert.equal(body.response_format.type, "json_object");

@@ -68,7 +68,7 @@ npm run dev
 | Variable | What it does |
 |---|---|
 | `GROQ_API_KEY` | Turns reading on. Without it, the scan button explains that reading is off and the record can still be filled by hand. Free tier at console.groq.com/keys. |
-| `GROQ_MODEL` | Optional. Default `qwen/qwen3.6-27b`, Groq's current vision model. |
+| `GROQ_MODEL` | Optional. Default `qwen/qwen3.8-27b`, the newer of Groq's Qwen vision models. |
 | `GROQ_BASE_URL` | Optional. A Groq-compatible endpoint (a proxy, or a local stand-in). |
 | `FORMLINK_MAX_SCANS_PER_MINUTE` | Optional. Scans per minute per server instance that may reach the model (default 10). A brake, not a lock. |
 | `NEXT_PUBLIC_SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` | Optional. Turns database saving on. The publishable key works too. |
