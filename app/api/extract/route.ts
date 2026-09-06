@@ -44,6 +44,16 @@ const READER_BANDS = 2;
 /** A sixth of the long axis, so a line of handwriting — or the print — cut by one half is whole in the other. */
 const READER_BAND_OVERLAP = 0.16;
 const READER_TIMEOUT_MS = 40_000;
+/**
+ * Room for the reply. Groq's free tier allows 1,000 output tokens a minute
+ * and refuses a request outright when its ESTIMATE of the reply — about a
+ * fifth of the input, or max_tokens if that is lower — exceeds the cap;
+ * with two pictures the estimate ran to 1,053–1,213 and roughly one scan
+ * in nine was refused (the retry usually passed). A cap just under the
+ * limit makes the estimate the cap. The longest reply seen, a school form
+ * full of Devanagari, was 608 tokens.
+ */
+const READER_MAX_TOKENS = 990;
 
 /**
  * One scan: the capture goes to the vision model with the form's field list;
@@ -168,6 +178,7 @@ async function readCapture(decoded: DecodedImage, form: FormDefinition, provider
     system: prompt.system,
     prompt: prompt.user,
     timeoutMs: READER_TIMEOUT_MS,
+    maxTokens: READER_MAX_TOKENS,
   });
   const parsed = parseReaderReply(text, form);
   const picture = Math.min(bands.length, Math.max(1, parsed.photoPicture ?? 1));
