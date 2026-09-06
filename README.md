@@ -26,8 +26,9 @@ the photograph, nothing else.
 2. **Photograph the filled-in copy** — camera or gallery. The browser downsizes
    it to 3500 px on the long edge (300 dpi of A4, and inside Vercel's 4.5 MB
    body limit) and posts it once to `/api/extract`.
-3. **One model call reads everything.** The capture goes to Groq's vision
-   model as two enlarged, overlapping halves (the model sees each picture at
+3. **One model call reads everything** (two, with the double check). The
+   capture goes to the vision model (OpenAI's GPT, or Groq's free Qwen) as
+   two enlarged, overlapping halves (the model sees each picture at
    a bounded resolution, so halves read hurried handwriting that the whole
    page does not) with the form's field list; the reply is one JSON object
    with every field and, alongside them, where the pasted photograph is as a
@@ -69,7 +70,13 @@ npm run dev
 
 | Variable | What it does |
 |---|---|
-| `GROQ_API_KEY` | Turns reading on. Without it, the scan button explains that reading is off and the record can still be filled by hand. Free tier at console.groq.com/keys. |
+| `OPENAI_API_KEY` | Turns reading on with OpenAI's GPT vision models, the stronger reader for handwriting, Hindi included. Needs credit on the account at platform.openai.com. Wins over Groq when both keys are set. |
+| `OPENAI_MODEL` | Optional. Default `gpt-5.4-mini`. |
+| `OPENAI_BASE_URL` | Optional. An OpenAI-compatible endpoint. |
+| `OPENAI_REASONING` | Optional. `none`, `minimal`, `low` (default), `medium`, `high`, `xhigh` or `default`; each model family gets the nearest word it accepts. |
+| `READER_PROVIDER` | Optional. `openai` or `groq`, to choose when both keys are set. |
+| `READER_DOUBLE_CHECK` | Optional. `on` or `off`. Read every scan twice and highlight the fields the two readings disagree on, with the other reading shown beside the field. On for OpenAI, off for Groq (its free tier cannot afford a second read a minute). Two model calls per scan, so the throttle's N scans a minute is 2N calls. |
+| `GROQ_API_KEY` | Turns reading on with Groq's free Qwen vision model. Without any key, the scan button explains that reading is off and the record can still be filled by hand. Free tier at console.groq.com/keys. |
 | `GROQ_MODEL` | Optional. Default `qwen/qwen3.6-27b`. Groq's newer `qwen/qwen3.8-27b` is capped on the free tier at 1,000 output tokens a minute, less than one reply, so it refuses every scan. |
 | `GROQ_REASONING` | Optional. `none` (default), `low`, `medium`, `high` or `default`: how much a reasoning model may think first. Thinking counts as output against Groq's per-minute caps. |
 | `GROQ_BASE_URL` | Optional. A Groq-compatible endpoint (a proxy, or a local stand-in). |
@@ -111,12 +118,12 @@ were retired on 2026-09-04 (`20260904044030_retire_previous_product.sql` and
 app/page.tsx                 the form chooser, and what this server can do
 app/scan/[form]/page.tsx     the scan screen for one form (?edit=<id> opens a saved scan)
 app/saved/page.tsx           the saved list
-app/api/extract/route.ts     one scan: Groq reads the page and locates the photograph, which is cut locally
+app/api/extract/route.ts     one scan: the model reads the page (twice, with a double check) and locates the photograph, which is cut locally
 app/api/scans/                list, save, get, update, delete, photo
 components/scanner/          ScanPanel, Scanner, RecordForm, Field
 components/saved/            SavedScans (list + drawer)
 lib/forms/definitions.ts     THE TWO FORMS — sections, fields, kinds, photo size
-lib/extract/                 prompt builder, reply parser, Groq client, retry, throttle
+lib/extract/                 prompt builder, reply parser, OpenAI and Groq clients, double check, retry, throttle
 lib/photo/locate-photo.ts    cut the photograph where the model located it, measuring its edges
 lib/regions, lib/vision, lib/ink, lib/geometry   the computer vision underneath it
 lib/db/scans.ts              Postgres + Storage
@@ -140,18 +147,23 @@ the editable form, the saved list — is generated from the definition.
 
 ## Limits, stated plainly
 
-- **Reading needs a key.** The Groq call is the product; with no key the app
+- **Reading needs a key.** The model call is the product; with no key the app
   is a form you fill by hand.
 - **Hindi handwriting is read only as well as the model can.** Answers in
   Devanagari are returned in Devanagari, never romanized, but a hurried Hindi
-  hand is the hardest thing on a form: Groq's Qwen vision models read the
-  English fields and digits well and still misread, or invent, some Hindi
-  names. Check those against the paper before saving.
+  hand is the hardest thing on a form. Groq's free Qwen model reads the
+  English fields and digits well and still misreads, or invents, some Hindi
+  names; OpenAI's GPT models do markedly better. A model that cannot read a
+  word never says so — it writes a plausible one — which is what the double
+  check is for: read twice, and the fields the readings disagree on are
+  highlighted with the other reading beside them. Check those against the
+  paper before saving.
 - **The photograph must be visible in the picture.** It is cut where the
   model says it is; a picture that misses the top of the form yields the
   text but no photograph, and says so. A crop marked "check the crop" was cut
   around the block the search found, without measured edges — look before
   saving.
 - **No accounts.** Anyone with the URL can scan, save, read and delete.
-- **One instance's throttle is one instance's.** Set a spend cap with Groq
-  before putting a key on a public deployment.
+- **One instance's throttle is one instance's.** Set a spend cap with OpenAI
+  (or Groq) before putting a key on a public deployment; with the double
+  check every scan is two calls.

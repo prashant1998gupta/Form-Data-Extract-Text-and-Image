@@ -4,7 +4,7 @@ import test from "node:test";
 import { groqProvider } from "../lib/extract/groq.ts";
 import { READER_SYSTEM_PROMPT } from "../lib/extract/prompt.ts";
 import { ProviderError, type ReadRequest, type TextProvider } from "../lib/extract/provider-types.ts";
-import { readWithRetry, reasoningEffort, resolveReader } from "../lib/extract/reader.ts";
+import { doubleCheckWanted, readWithRetry, reasoningEffort, resolveReader } from "../lib/extract/reader.ts";
 
 /**
  * The Groq transport is tested against an injected fetch, which pins the
@@ -203,7 +203,7 @@ test("a refusal without a JSON body still carries the text", async () => {
 });
 
 test("GROQ_REASONING takes the graded levels; unset or unrecognised means off", () => {
-  for (const [raw, expected] of [["low", "low"], ["high", "high"], ["default", "default"], [" none ", "none"], ["", "none"], ["yes", "none"], [undefined, "none"]] as const) {
+  for (const [raw, expected] of [["low", "low"], ["high", "high"], ["xhigh", "xhigh"], ["minimal", "minimal"], ["default", "default"], [" none ", "none"], ["", "none"], ["yes", "none"], [undefined, "none"]] as const) {
     assert.equal(reasoningEffort(raw), expected, `GROQ_REASONING=${String(raw)}`);
   }
 });
@@ -221,4 +221,31 @@ test("every picture goes to the model in order, before the words", async () => {
   assert.deepEqual(parts.map((part) => part.type), ["image_url", "image_url", "image_url", "text"]);
   assert.deepEqual(parts.slice(0, 3).map((part) => part.image_url?.url.slice(-4)), ["AAAA", "BBBB", "CCCC"]);
   assert.equal(parts[3]?.text, "the fields");
+});
+
+test("which reader runs follows the keys, and READER_PROVIDER overrides", () => {
+  assert.equal(resolveReader({}).provider, null);
+  assert.match(resolveReader({}).reason ?? "", /neither OPENAI_API_KEY nor GROQ_API_KEY/);
+  assert.equal(resolveReader({ GROQ_API_KEY: "gsk_x" }).provider?.name, "groq");
+  assert.equal(resolveReader({ OPENAI_API_KEY: "sk-x" }).provider?.name, "openai");
+  assert.equal(resolveReader({ OPENAI_API_KEY: "sk-x" }).provider?.model, "gpt-5.4-mini");
+  assert.equal(resolveReader({ OPENAI_API_KEY: "sk-x", OPENAI_MODEL: "gpt-5.5" }).provider?.model, "gpt-5.5");
+  // Both keys: OpenAI unless told otherwise.
+  const both = { OPENAI_API_KEY: "sk-x", GROQ_API_KEY: "gsk_x" };
+  assert.equal(resolveReader(both).provider?.name, "openai");
+  assert.equal(resolveReader({ ...both, READER_PROVIDER: "groq" }).provider?.name, "groq");
+  assert.equal(resolveReader({ ...both, READER_PROVIDER: "OpenAI" }).provider?.name, "openai");
+  // Asked for a reader whose key is missing: off, and it says which key.
+  assert.match(resolveReader({ GROQ_API_KEY: "gsk_x", READER_PROVIDER: "openai" }).reason ?? "", /OPENAI_API_KEY is not set/);
+  assert.match(resolveReader({ OPENAI_API_KEY: "sk-x", READER_PROVIDER: "groq" }).reason ?? "", /GROQ_API_KEY is not set/);
+});
+
+test("the double check is on for OpenAI, off for Groq, and the environment can say either way", () => {
+  const openai = resolveReader({ OPENAI_API_KEY: "sk-x" }).provider!;
+  const groq = resolveReader({ GROQ_API_KEY: "gsk_x" }).provider!;
+  assert.equal(doubleCheckWanted({}, openai), true);
+  assert.equal(doubleCheckWanted({}, groq), false);
+  assert.equal(doubleCheckWanted({ READER_DOUBLE_CHECK: "off" }, openai), false);
+  assert.equal(doubleCheckWanted({ READER_DOUBLE_CHECK: "on" }, groq), true);
+  assert.equal(doubleCheckWanted({ READER_DOUBLE_CHECK: "maybe" }, groq), false);
 });

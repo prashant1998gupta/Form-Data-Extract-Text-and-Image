@@ -1,6 +1,6 @@
 import FormChooser from "@/components/FormChooser";
 import { isDatabaseConfigured } from "@/lib/db/client";
-import { resolveReader } from "@/lib/extract/reader";
+import { doubleCheckWanted, resolveReader } from "@/lib/extract/reader";
 
 /**
  * The home screen: pick the form you are holding.
@@ -34,11 +34,12 @@ export default function Home() {
           <span>
             {reader.provider ? (
               <>
-                on · Groq <code>{reader.provider.model}</code>
+                on · {reader.provider.name === "openai" ? "OpenAI" : "Groq"} <code>{reader.provider.model}</code>
+                {doubleCheckWanted(process.env, reader.provider) ? " · read twice" : ""}
               </>
             ) : (
               <>
-                off · set <code>GROQ_API_KEY</code> on the server
+                off · set <code>OPENAI_API_KEY</code> or <code>GROQ_API_KEY</code> on the server
               </>
             )}
           </span>

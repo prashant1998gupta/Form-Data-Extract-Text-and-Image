@@ -11,6 +11,8 @@ import Field, { type FieldFlag } from "./Field";
 export interface ReviewMarks {
   readonly unreadable: ReadonlySet<string>;
   readonly notInOptions: ReadonlySet<string>;
+  /** Fields the two readings disagreed on, with the other reading's word. */
+  readonly uncertain: ReadonlyMap<string, string>;
   /** What the scan said about the photograph, shown under it. */
   readonly photoNote: string | null;
   readonly photoNeedsReview: boolean;
@@ -106,9 +108,11 @@ export default function RecordForm({ form, values, onChange, photo, onPhotoChang
               {section.fields.map((field) => {
                 const flag: FieldFlag = review.unreadable.has(field.key)
                   ? "unreadable"
-                  : review.notInOptions.has(field.key)
-                    ? "notInOptions"
-                    : null;
+                  : review.uncertain.has(field.key)
+                    ? "uncertain"
+                    : review.notInOptions.has(field.key)
+                      ? "notInOptions"
+                      : null;
                 return (
                   <Field
                     key={field.key}
@@ -116,6 +120,7 @@ export default function RecordForm({ form, values, onChange, photo, onPhotoChang
                     value={values[field.key] ?? ""}
                     onChange={onChange}
                     flag={flag}
+                    alternative={review.uncertain.get(field.key)}
                     required={field.key === form.titleKey}
                   />
                 );

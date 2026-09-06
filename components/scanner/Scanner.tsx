@@ -28,7 +28,7 @@ type Props = {
   editId: string | null;
 };
 
-const EMPTY_REVIEW: ReviewMarks = { unreadable: new Set(), notInOptions: new Set(), photoNote: null, photoNeedsReview: false };
+const EMPTY_REVIEW: ReviewMarks = { unreadable: new Set(), notInOptions: new Set(), uncertain: new Map(), photoNote: null, photoNeedsReview: false };
 
 /**
  * The scan screen, in CardLink's shape: scan on top, the editable record
@@ -182,6 +182,9 @@ export default function Scanner({ form, persistence, editId }: Props) {
     ? {
         unreadable: new Set(result.unreadable),
         notInOptions: new Set(result.notInOptions),
+        // A note that quotes the other reading is stale once the person has
+        // typed something else in that field; it goes with the edit.
+        uncertain: new Map((result.uncertain ?? []).filter((entry) => values[entry.key] === result.values[entry.key]).map((entry) => [entry.key, entry.alternative])),
         photoNote: result.photo.detail
           ? result.photo.found
             ? `Cut from the form — ${result.photo.detail}.`
@@ -222,6 +225,9 @@ export default function Scanner({ form, persistence, editId }: Props) {
                   (result.unreadable.length
                     ? ` ${result.unreadable.length} could not be read and ${result.unreadable.length === 1 ? "is" : "are"} highlighted.`
                     : "") +
+                  (result.uncertain?.length
+                    ? ` ${result.uncertain.length} differed between the two readings and ${result.uncertain.length === 1 ? "is" : "are"} highlighted.`
+                    : "") +
                   (result.photo.found ? " The photograph was cut from the form." : " No photograph was found.")
                 : `It does not look like a readable copy of the ${form.name}. Try a sharper photo with the whole page in frame, or fill the details in by hand.`}
             </p>
@@ -238,7 +244,7 @@ export default function Scanner({ form, persistence, editId }: Props) {
             <span className="eyebrow">{result ? "Step 2 · Check and save" : "Or fill in by hand"}</span>
             <h2>{saved ? `Editing ${saved.reference}` : "Record details"}</h2>
           </div>
-          <small>{result?.unreadable.length ? "Highlighted fields need checking" : `Only the ${titleLabel.toLowerCase()} is required`}</small>
+          <small>{result?.unreadable.length || result?.uncertain?.length ? "Highlighted fields need checking" : `Only the ${titleLabel.toLowerCase()} is required`}</small>
         </div>
 
         {loadingEdit ? (

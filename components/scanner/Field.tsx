@@ -2,20 +2,29 @@
 
 import { checklistItems, joinChecklist, type FieldDefinition } from "@/lib/forms/definitions";
 
-export type FieldFlag = "unreadable" | "notInOptions" | null;
+export type FieldFlag = "unreadable" | "notInOptions" | "uncertain" | null;
 
 type Props = {
   field: FieldDefinition;
   value: string;
   onChange: (key: string, value: string) => void;
   flag: FieldFlag;
+  /** For an uncertain field: what the second reading had ("" when it had the field blank). */
+  alternative?: string;
   required?: boolean;
 };
 
 const FLAG_TEXT: Record<Exclude<FieldFlag, null>, string> = {
   unreadable: "Could not be read — check the paper",
   notInOptions: "Not one of the printed options — check the paper",
+  uncertain: "The two readings differ — check the paper",
 };
+
+function flagText(flag: Exclude<FieldFlag, null>, alternative: string | undefined): string {
+  if (flag !== "uncertain") return FLAG_TEXT[flag];
+  if (alternative === undefined || alternative === "") return "Read on one pass only, blank on the other — check the paper";
+  return `Also read as “${alternative}” — check the paper`;
+}
 
 /**
  * Everything a phone number can legitimately contain. Filtering as the person
@@ -25,10 +34,10 @@ const FLAG_TEXT: Record<Exclude<FieldFlag, null>, string> = {
 const NOT_PHONE = /[^0-9+()\-.\s]/g;
 
 /** One field of the editable form, drawn by its kind. */
-export default function Field({ field, value, onChange, flag, required = false }: Props) {
+export default function Field({ field, value, onChange, flag, alternative, required = false }: Props) {
   const id = `field-${field.key}`;
   const className = ["field", field.wide ? "field-wide" : "", flag ? "needs-review" : ""].filter(Boolean).join(" ");
-  const note = flag ? <small className="field-note">{FLAG_TEXT[flag]}</small> : null;
+  const note = flag ? <small className="field-note">{flagText(flag, alternative)}</small> : null;
   const label = (
     <span className="field-label">
       {field.label}

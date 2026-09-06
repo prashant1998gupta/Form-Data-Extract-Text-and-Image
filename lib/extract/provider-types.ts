@@ -23,8 +23,12 @@ export interface ReadRequest {
   readonly maxTokens?: number;
 }
 
+/** How much a reasoning model may think before answering; each client maps this to what its API takes. */
+export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "default"] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+
 export interface TextProvider {
-  readonly name: "groq";
+  readonly name: "groq" | "openai";
   readonly model: string;
   /** Returns the model's raw reply text. Throws `ProviderError` on transport failure. */
   read(request: ReadRequest): Promise<string>;

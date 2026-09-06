@@ -26,9 +26,11 @@ export interface ExtractedForm {
   readonly values: FormValues;
   readonly unreadable: readonly string[];
   readonly notInOptions: readonly string[];
+  /** Fields the two readings of a double-checked scan disagreed on, with the other reading's word. */
+  readonly uncertain?: readonly { readonly key: string; readonly alternative: string }[];
   readonly filled: number;
   readonly photo: ExtractedPhoto;
-  readonly reader: { readonly provider: string; readonly model: string; readonly ms: number };
+  readonly reader: { readonly provider: string; readonly model: string; readonly ms: number; readonly passes?: number };
 }
 
 export class ExtractError extends Error {

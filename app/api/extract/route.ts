@@ -1,9 +1,10 @@
 import "server-only";
 
+import { reconcileReadings, singleReading } from "@/lib/extract/double-check";
 import { parseReaderReply, ReplyFormatError } from "@/lib/extract/parse";
 import { buildReaderPrompt } from "@/lib/extract/prompt";
 import { ProviderError, type TextProvider } from "@/lib/extract/provider-types";
-import { readWithRetry, resolveReader } from "@/lib/extract/reader";
+import { doubleCheckWanted, readWithRetry, resolveReader } from "@/lib/extract/reader";
 import { admitReaderScan, scansPerMinute } from "@/lib/extract/throttle";
 import { formById, type FormDefinition } from "@/lib/forms/definitions";
 import { bandBoxToImage, locatePhoto, normalizeBox, type LocatedPhoto } from "@/lib/photo/locate-photo";
@@ -45,15 +46,16 @@ const READER_BANDS = 2;
 const READER_BAND_OVERLAP = 0.16;
 const READER_TIMEOUT_MS = 40_000;
 /**
- * Room for the reply. Groq's free tier allows 1,000 output tokens a minute
- * and refuses a request outright when its ESTIMATE of the reply — about a
- * fifth of the input, or max_tokens if that is lower — exceeds the cap;
- * with two pictures the estimate ran to 1,053–1,213 and roughly one scan
- * in nine was refused (the retry usually passed). A cap just under the
- * limit makes the estimate the cap. The longest reply seen, a school form
- * full of Devanagari, was 608 tokens.
+ * Room for the reply on Groq. Its free tier allows 1,000 output tokens a
+ * minute and refuses a request outright when its ESTIMATE of the reply —
+ * about a fifth of the input, or max_tokens if that is lower — exceeds the
+ * cap; with two pictures the estimate ran to 1,053–1,213 and roughly one
+ * scan in nine was refused (the retry usually passed). A cap just under
+ * the limit makes the estimate the cap. The longest reply seen, a school
+ * form full of Devanagari, was 608 tokens. Other readers keep their own
+ * default: on a thinking model the thoughts share this budget.
  */
-const READER_MAX_TOKENS = 990;
+const GROQ_MAX_TOKENS = 990;
 
 /**
  * One scan: the capture goes to the vision model with the form's field list;
@@ -92,7 +94,7 @@ export async function POST(request: Request): Promise<Response> {
     return fail(
       503,
       "reader_not_configured",
-      "Form reading is not configured on this server: set GROQ_API_KEY. You can still fill the form by hand.",
+      "Form reading is not configured on this server: set OPENAI_API_KEY or GROQ_API_KEY. You can still fill the form by hand.",
     );
   }
   // The endpoint is unauthenticated, so every admitted scan is metered spend.
@@ -114,7 +116,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   try {
-    const reading = await readCapture(decoded, form, reader.provider);
+    const reading = await readCapture(decoded, form, reader.provider, doubleCheckWanted(process.env, reader.provider));
     timings.read = reading.ms;
 
     const started = performance.now();
@@ -131,6 +133,7 @@ export async function POST(request: Request): Promise<Response> {
         values: reading.values,
         unreadable: reading.unreadable,
         notInOptions: reading.notInOptions,
+        uncertain: reading.uncertain,
         filled: reading.filled,
         photo: photo.found
           ? {
@@ -145,7 +148,7 @@ export async function POST(request: Request): Promise<Response> {
               hint,
             }
           : { found: false, reason: photo.reason, detail: photo.detail, hint },
-        reader: { provider: reader.provider.name, model: reader.provider.model, ms: reading.ms },
+        reader: { provider: reader.provider.name, model: reader.provider.model, ms: reading.ms, passes: reading.passes },
         timings,
       },
       { headers: { "Cache-Control": "no-store" } },
@@ -168,26 +171,47 @@ export async function POST(request: Request): Promise<Response> {
  * thousandths of whichever half's canvas shows the print, comes back as
  * fractions of the capture. A reply that gives a box but not the picture is
  * taken to mean the first half: both forms carry the photograph at the top.
+ *
+ * With `doubleCheck`, the page is read twice at once and the two readings
+ * reconciled: fields they disagree on are flagged. A reading that fails
+ * costs nothing but the flags — the other stands alone, as it would have
+ * without the check; only when both fail does the scan.
  */
-async function readCapture(decoded: DecodedImage, form: FormDefinition, provider: TextProvider) {
+async function readCapture(decoded: DecodedImage, form: FormDefinition, provider: TextProvider, doubleCheck: boolean) {
   const started = performance.now();
   const bands = await encodeRgbJpegBands(decoded.rgb, READER_IMAGE_EDGE, READER_BANDS, READER_BAND_OVERLAP, 85);
   const prompt = buildReaderPrompt(form);
-  const text = await readWithRetry(provider, {
+  const request = {
     imagesJpegBase64: bands.map((band) => band.jpeg.toString("base64")),
     system: prompt.system,
     prompt: prompt.user,
     timeoutMs: READER_TIMEOUT_MS,
-    maxTokens: READER_MAX_TOKENS,
-  });
-  const parsed = parseReaderReply(text, form);
-  const picture = Math.min(bands.length, Math.max(1, parsed.photoPicture ?? 1));
+    maxTokens: provider.name === "groq" ? GROQ_MAX_TOKENS : undefined,
+  };
+  const read = async () => parseReaderReply(await readWithRetry(provider, request), form);
+  let reconciled;
+  let passes = 1;
+  if (doubleCheck) {
+    const outcomes = await Promise.allSettled([read(), read()]);
+    const readings = outcomes.flatMap((outcome) => (outcome.status === "fulfilled" ? [outcome.value] : []));
+    if (readings.length === 0) throw (outcomes[0] as PromiseRejectedResult).reason;
+    if (readings.length === 1) {
+      const failed = outcomes.find((outcome) => outcome.status === "rejected") as PromiseRejectedResult;
+      console.warn("one of the two readings failed; the other stands alone", failed.reason instanceof Error ? failed.reason.message : failed.reason);
+    }
+    reconciled = readings.length === 2 ? reconcileReadings(readings[0]!, readings[1]!, form) : singleReading(readings[0]!);
+    passes = readings.length;
+  } else {
+    reconciled = singleReading(await read());
+  }
+  const picture = Math.min(bands.length, Math.max(1, reconciled.photoPicture ?? 1));
   const band = bands[picture - 1]!;
-  const onCanvas = parsed.photoBox ? normalizeBox(parsed.photoBox, band.edge, band.edge) : null;
+  const onCanvas = reconciled.photoBox ? normalizeBox(reconciled.photoBox, band.edge, band.edge) : null;
   const photoBox = onCanvas ? bandBoxToImage(onCanvas, band, decoded.rgb.width, decoded.rgb.height) : null;
   return {
-    ...parsed,
-    rawPhotoBox: parsed.photoBox,
+    ...reconciled,
+    passes,
+    rawPhotoBox: reconciled.photoBox,
     photoBox,
     sent: {
       width: decoded.rgb.width,

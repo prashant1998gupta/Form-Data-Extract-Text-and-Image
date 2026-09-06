@@ -16,13 +16,12 @@
  * the reply as untrusted either way.
  */
 
-import { ProviderError, type ReadRequest, type TextProvider } from "./provider-types.ts";
+import { finishReason, messageContent, refusalDetail, retryAfterMs } from "./chat-completions.ts";
+import { ProviderError, type ReadRequest, type ReasoningEffort, type TextProvider } from "./provider-types.ts";
 
 export const GROQ_DEFAULT_MODEL = "qwen/qwen3.6-27b";
 export const GROQ_DEFAULT_BASE_URL = "https://api.groq.com/openai/v1";
 
-export const REASONING_EFFORTS = ["none", "low", "medium", "high", "default"] as const;
-export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 
 export interface GroqOptions {
   readonly apiKey: string;
@@ -63,7 +62,7 @@ export function groqProvider(options: GroqOptions): TextProvider {
             // Deterministic-as-available: transcription has one right answer.
             temperature: 0,
             max_tokens: request.maxTokens ?? 4096,
-            reasoning_effort: options.reasoning ?? "none",
+            reasoning_effort: groqEffort(options.reasoning ?? "none"),
             response_format: { type: "json_object" },
             messages: [
               { role: "system", content: request.system },
@@ -123,27 +122,6 @@ export function groqProvider(options: GroqOptions): TextProvider {
   };
 }
 
-/** `choices[0].message.content`, verified rather than cast. */
-function messageContent(payload: unknown): string | null {
-  const message = firstChoice(payload)?.message;
-  if (typeof message !== "object" || message === null) return null;
-  const content = (message as { content?: unknown }).content;
-  return typeof content === "string" ? content : null;
-}
-
-function finishReason(payload: unknown): string | null {
-  const reason = firstChoice(payload)?.finish_reason;
-  return typeof reason === "string" ? reason : null;
-}
-
-function firstChoice(payload: unknown): { message?: unknown; finish_reason?: unknown } | null {
-  if (typeof payload !== "object" || payload === null) return null;
-  const choices = (payload as { choices?: unknown }).choices;
-  if (!Array.isArray(choices) || choices.length === 0) return null;
-  const choice = choices[0];
-  return typeof choice === "object" && choice !== null ? (choice as { message?: unknown; finish_reason?: unknown }) : null;
-}
-
 /**
  * Groq's own account of a refusal, when it gives one. A 400 in JSON mode
  * usually means the model's reply failed JSON validation; Groq then sends
@@ -151,30 +129,22 @@ function firstChoice(payload: unknown): { message?: unknown; finish_reason?: unk
  * operator and never shown to the person.
  */
 async function describeRefusal(response: Response): Promise<string | null> {
-  let text: string;
-  try {
-    text = await response.text();
-  } catch {
-    return null;
+  const detail = await refusalDetail(response);
+  if (detail.failedGeneration !== null) {
+    // One escaped line: a multi-line value is cut to its first line by
+    // most log viewers, which for a JSON reply is a lone brace.
+    console.error(`groq rejected the model's reply as JSON: ${JSON.stringify(detail.failedGeneration.slice(0, 2000))}`);
   }
-  try {
-    const payload = JSON.parse(text) as { error?: { message?: unknown; code?: unknown; failed_generation?: unknown } };
-    const error = payload.error;
-    if (error && typeof error === "object") {
-      if (typeof error.failed_generation === "string") {
-        // One escaped line: a multi-line value is cut to its first line by
-        // most log viewers, which for a JSON reply is a lone brace.
-        console.error(`groq rejected the model's reply as JSON: ${JSON.stringify(error.failed_generation.slice(0, 2000))}`);
-      }
-      if (typeof error.message === "string") {
-        return typeof error.code === "string" ? `${error.message} [${error.code}]` : error.message;
-      }
-    }
-  } catch {
-    // Not JSON — the text itself is the account.
-  }
-  const trimmed = text.trim().slice(0, 200);
+  if (detail.message) return detail.code ? `${detail.message} [${detail.code}]` : detail.message;
+  const trimmed = detail.text.trim().slice(0, 200);
   return trimmed || null;
+}
+
+/** Groq's vocabulary has neither "minimal" nor "xhigh"; the nearest it has. */
+function groqEffort(effort: ReasoningEffort): "none" | "low" | "medium" | "high" | "default" {
+  if (effort === "minimal") return "low";
+  if (effort === "xhigh") return "high";
+  return effort;
 }
 
 function statusMessage(status: number, refusal: string | null): string {
@@ -184,16 +154,4 @@ function statusMessage(status: number, refusal: string | null): string {
   if (status === 429) return "the reader is busy right now — wait a moment and try again";
   if (status >= 500) return "the reader had a server error";
   return refusal ? `the reader refused the request (HTTP ${status}: ${refusal})` : `the reader refused the request (HTTP ${status})`;
-}
-
-/**
- * How long the server asked us to wait, when it said. Groq's free tier answers
- * a burst with `retry-after` values of 2-20 s; the cap keeps a misbehaving
- * header from parking a request for a minute.
- */
-function retryAfterMs(response: Response): number | undefined {
-  const header = response.headers.get("retry-after");
-  if (!header) return undefined;
-  const seconds = Number(header);
-  return Number.isFinite(seconds) && seconds >= 0 ? Math.min(seconds, 30) * 1000 : undefined;
 }
