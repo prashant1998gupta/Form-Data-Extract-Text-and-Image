@@ -4,7 +4,7 @@ import test from "node:test";
 import { groqProvider } from "../lib/extract/groq.ts";
 import { READER_SYSTEM_PROMPT } from "../lib/extract/prompt.ts";
 import { ProviderError, type ReadRequest, type TextProvider } from "../lib/extract/provider-types.ts";
-import { readWithRetry, resolveReader } from "../lib/extract/reader.ts";
+import { readWithRetry, reasoningEffort, resolveReader } from "../lib/extract/reader.ts";
 
 /**
  * The Groq transport is tested against an injected fetch, which pins the
@@ -199,4 +199,10 @@ test("a refusal without a JSON body still carries the text", async () => {
     assert.match(error.message, /image invalid/);
     return true;
   });
+});
+
+test("GROQ_REASONING takes the graded levels, and anything else means off", () => {
+  for (const [raw, expected] of [["low", "low"], ["high", "high"], ["default", "default"], [" none ", "none"], ["", "none"], ["yes", "none"], [undefined, "none"]] as const) {
+    assert.equal(reasoningEffort(raw), expected, `GROQ_REASONING=${String(raw)}`);
+  }
 });

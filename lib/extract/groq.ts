@@ -18,6 +18,9 @@ import { ProviderError, type ReadRequest, type TextProvider } from "./provider-t
 export const GROQ_DEFAULT_MODEL = "qwen/qwen3.8-27b";
 export const GROQ_DEFAULT_BASE_URL = "https://api.groq.com/openai/v1";
 
+export const REASONING_EFFORTS = ["none", "low", "medium", "high", "default"] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+
 export interface GroqOptions {
   readonly apiKey: string;
   readonly model?: string;
@@ -26,9 +29,11 @@ export interface GroqOptions {
    * How much the model may "think" before answering. Off by default: a
    * transcription has nothing to deliberate, and a reasoning model that
    * thinks in JSON mode can spend the entire output budget on thoughts and
-   * hand Groq an empty reply — which Groq then refuses as invalid JSON.
+   * hand Groq an empty reply — which Groq then refuses as invalid JSON. The
+   * graded levels exist for the models that take them (qwen3.8 does), when a
+   * hard hand is worth a little deliberation.
    */
-  readonly reasoning?: "none" | "default";
+  readonly reasoning?: ReasoningEffort;
   /** Injection point for tests. Defaults to the platform fetch. */
   readonly fetchImpl?: typeof fetch;
 }

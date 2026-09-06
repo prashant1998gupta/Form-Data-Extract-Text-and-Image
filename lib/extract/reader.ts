@@ -5,13 +5,13 @@
  *   GROQ_API_KEY   enables reading (free tier at console.groq.com/keys)
  *   GROQ_MODEL     overrides the default vision model
  *   GROQ_BASE_URL  points at a Groq-compatible endpoint
- *   GROQ_REASONING "default" lets a reasoning model think first; off otherwise
+ *   GROQ_REASONING none (default) | low | medium | high | default — how much a reasoning model may think first
  *
  * With no key the reader is off, and the scan endpoint says so in words the
  * operator can act on rather than pretending the feature does not exist.
  */
 
-import { groqProvider } from "./groq.ts";
+import { groqProvider, REASONING_EFFORTS, type ReasoningEffort } from "./groq.ts";
 import { ProviderError, type ReadRequest, type TextProvider } from "./provider-types.ts";
 
 export interface ResolvedReader {
@@ -28,9 +28,15 @@ export function resolveReader(env: Record<string, string | undefined>): Resolved
       apiKey,
       model: env.GROQ_MODEL?.trim() || undefined,
       baseUrl: env.GROQ_BASE_URL?.trim() || undefined,
-      reasoning: env.GROQ_REASONING?.trim() === "default" ? "default" : "none",
+      reasoning: reasoningEffort(env.GROQ_REASONING),
     }),
   };
+}
+
+/** The environment's word for how much thinking is allowed; off for anything unrecognised. */
+export function reasoningEffort(raw: string | undefined): ReasoningEffort {
+  const value = raw?.trim();
+  return (REASONING_EFFORTS as readonly string[]).includes(value ?? "") ? (value as ReasoningEffort) : "none";
 }
 
 export interface RetryOptions {
