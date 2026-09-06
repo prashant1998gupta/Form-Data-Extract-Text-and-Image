@@ -53,3 +53,12 @@ test("the reader is asked where the photograph is, in thousandths, and the skele
   const skeleton = JSON.parse(user.split("\n").at(-1)!) as { photo: unknown };
   assert.ok("photo" in skeleton);
 });
+
+test("the reader is told the scripts the writing comes in, and to keep them", () => {
+  assert.match(READER_SYSTEM_PROMPT, /Devanagari stays Devanagari/);
+  assert.match(READER_SYSTEM_PROMPT, /Never romanize, transliterate or translate/);
+  assert.match(READER_SYSTEM_PROMPT, /struck through/);
+  assert.match(READER_SYSTEM_PROMPT, /logo, emblem, icon or QR code is never the photograph/);
+  const { user } = buildReaderPrompt(HOSPITAL_FORM);
+  assert.ok(user.includes("in the script it is written in"));
+});
