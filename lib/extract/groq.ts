@@ -87,6 +87,9 @@ export function groqProvider(options: GroqOptions): TextProvider {
 
       if (!response.ok) {
         const refusal = await describeRefusal(response);
+        // A rate limit is the operator's problem, and Groq's message says
+        // which limit — per minute, per day, tokens or requests.
+        if (response.status === 429) console.warn(`groq rate limit: ${refusal ?? "(no detail)"}; retry-after ${response.headers.get("retry-after") ?? "?"}`);
         throw new ProviderError(statusMessage(response.status, refusal), {
           status: response.status,
           retryable: response.status === 429 || response.status >= 500,
