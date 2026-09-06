@@ -67,10 +67,10 @@ export function groqProvider(options: GroqOptions): TextProvider {
               {
                 role: "user",
                 content: [
-                  {
+                  ...[request.imageJpegBase64, ...(request.detailJpegBase64 ?? [])].map((jpeg) => ({
                     type: "image_url",
-                    image_url: { url: `data:image/jpeg;base64,${request.imageJpegBase64}` },
-                  },
+                    image_url: { url: `data:image/jpeg;base64,${jpeg}` },
+                  })),
                   { type: "text", text: request.prompt },
                 ],
               },

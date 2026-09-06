@@ -59,6 +59,8 @@ test("the reader is told the scripts the writing comes in, and to keep them", ()
   assert.match(READER_SYSTEM_PROMPT, /Never romanize, transliterate or translate/);
   assert.match(READER_SYSTEM_PROMPT, /struck through/);
   assert.match(READER_SYSTEM_PROMPT, /logo, emblem, icon or QR code is never the photograph/);
+  assert.match(READER_SYSTEM_PROMPT, /full square canvas of the FIRST picture/);
+  assert.match(READER_SYSTEM_PROMPT, /top and bottom halves/);
   const { user } = buildReaderPrompt(HOSPITAL_FORM);
   assert.ok(user.includes("in the script it is written in"));
 });

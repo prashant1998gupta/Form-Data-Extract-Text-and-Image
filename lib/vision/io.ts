@@ -262,6 +262,39 @@ export async function encodeRgbJpegSquare(
   return { jpeg, width, height, edge };
 }
 
+/**
+ * The capture cut into overlapping bands along its long axis, each scaled to
+ * `edge` on its own long side: the same page at about twice the magnification
+ * the square canvas gives it. For reading, never for locating — nothing the
+ * model says about a band is mapped back to the capture.
+ */
+export async function encodeRgbJpegBands(image: Rgb, edge: number, count = 2, overlap = 0.1, quality = 82): Promise<Buffer[]> {
+  const portrait = image.height >= image.width;
+  const length = portrait ? image.height : image.width;
+  const fraction = Math.min(1, (1 + overlap) / count);
+  const bandLength = Math.max(1, Math.round(length * fraction));
+  const source = sharp(Buffer.from(image.data.buffer, image.data.byteOffset, image.data.byteLength), {
+    raw: { width: image.width, height: image.height, channels: image.channels },
+  });
+  const out: Buffer[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const start = count === 1 ? 0 : Math.round((i / (count - 1)) * (length - bandLength));
+    const region = portrait
+      ? { left: 0, top: start, width: image.width, height: bandLength }
+      : { left: start, top: 0, width: bandLength, height: image.height };
+    const scale = edge / Math.max(region.width, region.height);
+    out.push(
+      await source
+        .clone()
+        .extract(region)
+        .resize(Math.max(1, Math.round(region.width * scale)), Math.max(1, Math.round(region.height * scale)), { fit: "fill", kernel: "lanczos3" })
+        .jpeg({ quality, mozjpeg: true })
+        .toBuffer(),
+    );
+  }
+  return out;
+}
+
 /** Encodes a working-resolution RGB buffer to PNG. */
 export async function encodeRgbPng(image: Rgb): Promise<Buffer> {
   return sharp(Buffer.from(image.data.buffer, image.data.byteOffset, image.data.byteLength), {

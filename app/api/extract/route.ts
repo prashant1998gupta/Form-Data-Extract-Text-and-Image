@@ -7,7 +7,7 @@ import { readWithRetry, resolveReader } from "@/lib/extract/reader";
 import { admitReaderScan, scansPerMinute } from "@/lib/extract/throttle";
 import { formById, type FormDefinition } from "@/lib/forms/definitions";
 import { canvasBoxToImage, locatePhoto, normalizeBox, type LocatedPhoto } from "@/lib/photo/locate-photo";
-import { decodeFullRgb, decodeImage, encodeRgbJpegSquare, ImageDecodeError, type DecodedImage } from "@/lib/vision/io";
+import { decodeFullRgb, decodeImage, encodeRgbJpegBands, encodeRgbJpegSquare, ImageDecodeError, type DecodedImage } from "@/lib/vision/io";
 
 export const runtime = "nodejs";
 /**
@@ -34,6 +34,15 @@ const MAX_BYTES = 25 * 1024 * 1024;
  * convention agrees (see `encodeRgbJpegSquare`).
  */
 const READER_IMAGE_EDGE = 2000;
+/**
+ * Alongside the canvas, the capture's top and bottom halves at the same edge:
+ * the handwriting at about twice the magnification. Groq takes three images
+ * per request, and the model appears to see each at a bounded resolution —
+ * a page-cropped copy of the owner's school form read ten more fields than
+ * the whole picture — so the resolution the reader gets comes from splitting.
+ */
+const READER_DETAIL_BANDS = 2;
+const READER_DETAIL_OVERLAP = 0.1;
 const READER_TIMEOUT_MS = 40_000;
 
 /**
@@ -148,9 +157,11 @@ export async function POST(request: Request): Promise<Response> {
 async function readCapture(decoded: DecodedImage, form: FormDefinition, provider: TextProvider) {
   const started = performance.now();
   const canvas = await encodeRgbJpegSquare(decoded.rgb, READER_IMAGE_EDGE, 85);
+  const bands = await encodeRgbJpegBands(decoded.rgb, READER_IMAGE_EDGE, READER_DETAIL_BANDS, READER_DETAIL_OVERLAP, 85);
   const prompt = buildReaderPrompt(form);
   const text = await readWithRetry(provider, {
     imageJpegBase64: canvas.jpeg.toString("base64"),
+    detailJpegBase64: bands.map((band) => band.toString("base64")),
     system: prompt.system,
     prompt: prompt.user,
     timeoutMs: READER_TIMEOUT_MS,

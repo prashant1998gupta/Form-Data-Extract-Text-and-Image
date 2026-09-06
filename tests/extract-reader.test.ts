@@ -207,3 +207,18 @@ test("GROQ_REASONING takes the graded levels; unset or unrecognised means a litt
     assert.equal(reasoningEffort(raw), expected, `GROQ_REASONING=${String(raw)}`);
   }
 });
+
+test("enlarged parts of the page go to the model after the canvas, before the words", async () => {
+  let seenInit: RequestInit | undefined;
+  const fetchImpl: typeof fetch = async (_url, init) => {
+    seenInit = init;
+    return new Response(JSON.stringify({ choices: [{ message: { content: "{}" }, finish_reason: "stop" }] }), { status: 200 });
+  };
+  const provider = groqProvider({ apiKey: "gsk_x", fetchImpl });
+  await provider.read({ imageJpegBase64: "AAAA", detailJpegBase64: ["BBBB", "CCCC"], system: "s", prompt: "the fields", timeoutMs: 1000 });
+  const body = JSON.parse(String(seenInit?.body)) as { messages: [unknown, { content: ({ type: string; image_url?: { url: string }; text?: string })[] }] };
+  const parts = body.messages[1].content;
+  assert.deepEqual(parts.map((part) => part.type), ["image_url", "image_url", "image_url", "text"]);
+  assert.deepEqual(parts.slice(0, 3).map((part) => part.image_url?.url.slice(-4)), ["AAAA", "BBBB", "CCCC"]);
+  assert.equal(parts[3]?.text, "the fields");
+});

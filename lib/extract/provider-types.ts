@@ -6,6 +6,11 @@
 export interface ReadRequest {
   /** The page image, JPEG, base64 without a data-URL prefix. */
   readonly imageJpegBase64: string;
+  /**
+   * Enlarged parts of the same page, in reading order, for the handwriting.
+   * Groq takes three images per request; the page and two halves fill it.
+   */
+  readonly detailJpegBase64?: readonly string[];
   /** The rules — the same for every form. */
   readonly system: string;
   /** The form's field list and the reply shape. */

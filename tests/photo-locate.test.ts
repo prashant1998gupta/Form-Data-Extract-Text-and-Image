@@ -3,7 +3,7 @@ import test from "node:test";
 
 import type { PhotoDefinition } from "../lib/forms/definitions.ts";
 import { canvasBoxToImage, locatePhoto, normalizeBox, type NormalizedBox } from "../lib/photo/locate-photo.ts";
-import { encodeRgbJpegSquare } from "../lib/vision/io.ts";
+import { encodeRgbJpegBands, encodeRgbJpegSquare } from "../lib/vision/io.ts";
 import type { Rect, Rgb } from "../lib/vision/types.ts";
 import { renderSyntheticForm } from "./helpers/synthetic-form.ts";
 
@@ -195,4 +195,23 @@ test("the square canvas scales a small capture up to fill its long side, so the 
   const down = await encodeRgbJpegSquare({ data: big, width: 900, height: 1200, channels: 3 }, 600, 80);
   assert.equal(down.height, 600);
   assert.equal(down.width, 450);
+});
+
+test("the enlarged halves overlap, run along the long axis, and each fill the edge", async () => {
+  const sharp = (await import("sharp")).default;
+  const width = 300;
+  const height = 400;
+  const data = new Uint8ClampedArray(width * height * 3).fill(200);
+  const bands = await encodeRgbJpegBands({ data, width, height, channels: 3 }, 600, 2, 0.1, 80);
+  assert.equal(bands.length, 2);
+  for (const band of bands) {
+    const meta = await sharp(band).metadata();
+    // A 300x400 portrait: each band is the full width by 55 % of the height, scaled x2.
+    assert.equal(meta.width, 600);
+    assert.equal(meta.height, 440);
+  }
+  const wide = await encodeRgbJpegBands({ data, width: height, height: width, channels: 3 }, 600, 2, 0.1, 80);
+  const meta = await sharp(wide[0]!).metadata();
+  assert.equal(meta.width, 440);
+  assert.equal(meta.height, 600);
 });
