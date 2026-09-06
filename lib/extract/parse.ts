@@ -35,6 +35,8 @@ export interface ParsedReading {
    * image). Null when it saw none or answered in a shape that is not a box.
    */
   readonly photoBox: readonly [number, number, number, number] | null;
+  /** Which of the pictures the box refers to, 1-based, when the reply says. */
+  readonly photoPicture: number | null;
 }
 
 export class ReplyFormatError extends Error {
@@ -80,7 +82,14 @@ export function parseReaderReply(text: string, form: FormDefinition): ParsedRead
 
   const filled = Object.values(values).filter((value) => value !== "").length;
   const photoBox = readable ? parseBox(object.photo ?? object.photoBox ?? object.photo_box ?? source.photo) : null;
-  return { readable, values, unreadable, notInOptions, filled, photoBox };
+  const photoPicture = photoBox ? parsePicture(object.photoPicture ?? object.photo_picture ?? source.photoPicture) : null;
+  return { readable, values, unreadable, notInOptions, filled, photoBox, photoPicture };
+}
+
+/** A small positive integer, however the model wrote it; anything else is "not said". */
+function parsePicture(raw: unknown): number | null {
+  const value = typeof raw === "string" ? Number(raw.trim()) : raw;
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 9 ? value : null;
 }
 
 /**

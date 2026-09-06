@@ -106,6 +106,28 @@ export function canvasBoxToImage(box: NormalizedBox, imageWidth: number, imageHe
   return mapped;
 }
 
+/**
+ * A box in thousandths of one band's square canvas, restated as fractions of
+ * the capture the band was cut from. The band sits at the canvas's top-left
+ * like the whole capture would, so the same restatement applies, and then
+ * the band's place in the capture is added.
+ */
+export function bandBoxToImage(
+  box: NormalizedBox,
+  band: { readonly region: Rect; readonly width: number; readonly height: number; readonly edge: number },
+  imageWidth: number,
+  imageHeight: number,
+): NormalizedBox | null {
+  const onBand = canvasBoxToImage(box, band.width, band.height, band.edge);
+  if (!onBand) return null;
+  const clamp = (value: number) => Math.min(1, Math.max(0, value));
+  const toX = (f: number) => clamp((band.region.x + f * band.region.width) / Math.max(1, imageWidth));
+  const toY = (f: number) => clamp((band.region.y + f * band.region.height) / Math.max(1, imageHeight));
+  const mapped = { x1: toX(onBand.x1), y1: toY(onBand.y1), x2: toX(onBand.x2), y2: toY(onBand.y2) };
+  if (mapped.x2 - mapped.x1 <= 0 || mapped.y2 - mapped.y1 <= 0) return null;
+  return mapped;
+}
+
 // ---------------------------------------------------------------------------
 // The result
 // ---------------------------------------------------------------------------

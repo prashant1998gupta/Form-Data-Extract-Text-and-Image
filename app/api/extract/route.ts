@@ -6,8 +6,8 @@ import { ProviderError, type TextProvider } from "@/lib/extract/provider-types";
 import { readWithRetry, resolveReader } from "@/lib/extract/reader";
 import { admitReaderScan, scansPerMinute } from "@/lib/extract/throttle";
 import { formById, type FormDefinition } from "@/lib/forms/definitions";
-import { canvasBoxToImage, locatePhoto, normalizeBox, type LocatedPhoto } from "@/lib/photo/locate-photo";
-import { decodeFullRgb, decodeImage, encodeRgbJpegBands, encodeRgbJpegSquare, ImageDecodeError, type DecodedImage } from "@/lib/vision/io";
+import { bandBoxToImage, locatePhoto, normalizeBox, type LocatedPhoto } from "@/lib/photo/locate-photo";
+import { decodeFullRgb, decodeImage, encodeRgbJpegBands, ImageDecodeError, type DecodedImage } from "@/lib/vision/io";
 
 export const runtime = "nodejs";
 /**
@@ -25,27 +25,24 @@ export const maxDuration = 60;
 const MAX_BYTES = 25 * 1024 * 1024;
 
 /**
- * The picture the model is shown: the capture as taken, at 2000 px on its long
- * edge, at the top-left of a 2000 px square canvas — comfortably legible for
- * handwriting, well inside Groq's 4 MB base64 limit. Not straightened first:
- * the model reads a tilted page fine, and the box it returns must refer to
- * the frame the crop is cut from. Square, because the model's box was found
- * to use the picture's height as the scale of BOTH axes; on a square every
- * convention agrees (see `encodeRgbJpegSquare`).
+ * What the model is shown: the capture as taken, cut into two overlapping
+ * halves along its long axis, each at 2000 px on its long side at the
+ * top-left of a 2000 px square canvas. Not the whole page in one picture:
+ * the model sees each picture at a bounded resolution (Groq bills a fixed
+ * token count per image, whatever its size), and on the owner's hurried
+ * Hindi school form the halves read 26 of 41 fields where the whole page
+ * read 20, the names among them. Two pictures, not three: Groq's free tier
+ * allows 7,000 input tokens a minute and each picture costs about 1,600, so
+ * the whole page beside the halves would refuse every scan. Not straightened
+ * first: the model reads a tilted page fine, and its box must refer to a
+ * frame the crop can be cut from. Square canvases, because the model's box
+ * was found to use the picture's height as the scale of BOTH axes; on a
+ * square every convention agrees (see `encodeRgbJpegSquare`).
  */
 const READER_IMAGE_EDGE = 2000;
-/**
- * Enlarged halves of the capture sent alongside the canvas (0 = none). Groq
- * takes three images per request, and the model appears to see each at a
- * bounded resolution — a page-cropped copy of the owner's school form read a
- * few more fields than the whole picture. But three 2000 px JPEGs overrun
- * Groq's request size ("the page image was too large", HTTP 413) and the
- * gain on qwen3.6 was two fields of forty-one, so the halves are off until
- * a smaller encoding is measured. The plumbing (`encodeRgbJpegBands`,
- * `detailJpegBase64`) stays.
- */
-const READER_DETAIL_BANDS = 0;
-const READER_DETAIL_OVERLAP = 0.1;
+const READER_BANDS = 2;
+/** A sixth of the long axis, so a line of handwriting — or the print — cut by one half is whole in the other. */
+const READER_BAND_OVERLAP = 0.16;
 const READER_TIMEOUT_MS = 40_000;
 
 /**
@@ -156,27 +153,38 @@ export async function POST(request: Request): Promise<Response> {
   }
 }
 
-/** The model reads the capture; its photo box comes back as fractions of the capture. */
+/**
+ * The model reads the capture from its two halves; its photo box, given in
+ * thousandths of whichever half's canvas shows the print, comes back as
+ * fractions of the capture. A reply that gives a box but not the picture is
+ * taken to mean the first half: both forms carry the photograph at the top.
+ */
 async function readCapture(decoded: DecodedImage, form: FormDefinition, provider: TextProvider) {
   const started = performance.now();
-  const canvas = await encodeRgbJpegSquare(decoded.rgb, READER_IMAGE_EDGE, 85);
-  const bands = READER_DETAIL_BANDS > 0 ? await encodeRgbJpegBands(decoded.rgb, READER_IMAGE_EDGE, READER_DETAIL_BANDS, READER_DETAIL_OVERLAP, 85) : [];
+  const bands = await encodeRgbJpegBands(decoded.rgb, READER_IMAGE_EDGE, READER_BANDS, READER_BAND_OVERLAP, 85);
   const prompt = buildReaderPrompt(form);
   const text = await readWithRetry(provider, {
-    imageJpegBase64: canvas.jpeg.toString("base64"),
-    detailJpegBase64: bands.length ? bands.map((band) => band.toString("base64")) : undefined,
+    imagesJpegBase64: bands.map((band) => band.jpeg.toString("base64")),
     system: prompt.system,
     prompt: prompt.user,
     timeoutMs: READER_TIMEOUT_MS,
   });
   const parsed = parseReaderReply(text, form);
-  const onCanvas = parsed.photoBox ? normalizeBox(parsed.photoBox, canvas.edge, canvas.edge) : null;
-  const photoBox = onCanvas ? canvasBoxToImage(onCanvas, canvas.width, canvas.height, canvas.edge) : null;
+  const picture = Math.min(bands.length, Math.max(1, parsed.photoPicture ?? 1));
+  const band = bands[picture - 1]!;
+  const onCanvas = parsed.photoBox ? normalizeBox(parsed.photoBox, band.edge, band.edge) : null;
+  const photoBox = onCanvas ? bandBoxToImage(onCanvas, band, decoded.rgb.width, decoded.rgb.height) : null;
   return {
     ...parsed,
     rawPhotoBox: parsed.photoBox,
     photoBox,
-    sent: { width: canvas.width, height: canvas.height, edge: canvas.edge },
+    sent: {
+      width: decoded.rgb.width,
+      height: decoded.rgb.height,
+      edge: READER_IMAGE_EDGE,
+      picture,
+      pictures: bands.map((each) => ({ region: each.region, width: each.width, height: each.height })),
+    },
     ms: Math.round(performance.now() - started),
   };
 }

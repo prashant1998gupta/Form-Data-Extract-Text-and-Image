@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { PhotoDefinition } from "../lib/forms/definitions.ts";
-import { canvasBoxToImage, locatePhoto, normalizeBox, type NormalizedBox } from "../lib/photo/locate-photo.ts";
+import { bandBoxToImage, canvasBoxToImage, locatePhoto, normalizeBox, type NormalizedBox } from "../lib/photo/locate-photo.ts";
 import { encodeRgbJpegBands, encodeRgbJpegSquare } from "../lib/vision/io.ts";
 import type { Rect, Rgb } from "../lib/vision/types.ts";
 import { renderSyntheticForm } from "./helpers/synthetic-form.ts";
@@ -197,21 +197,37 @@ test("the square canvas scales a small capture up to fill its long side, so the 
   assert.equal(down.width, 450);
 });
 
-test("the enlarged halves overlap, run along the long axis, and each fill the edge", async () => {
+test("the halves overlap, run along the long axis, sit on square canvases, and say where they came from", async () => {
   const sharp = (await import("sharp")).default;
   const width = 300;
   const height = 400;
   const data = new Uint8ClampedArray(width * height * 3).fill(200);
   const bands = await encodeRgbJpegBands({ data, width, height, channels: 3 }, 600, 2, 0.1, 80);
   assert.equal(bands.length, 2);
+  // A 300x400 portrait: each band is the full width by 55 % of the height (220 px), scaled x2 onto a 600 square.
+  assert.deepEqual(bands[0]!.region, { x: 0, y: 0, width: 300, height: 220 });
+  assert.deepEqual(bands[1]!.region, { x: 0, y: 180, width: 300, height: 220 });
   for (const band of bands) {
-    const meta = await sharp(band).metadata();
-    // A 300x400 portrait: each band is the full width by 55 % of the height, scaled x2.
+    assert.equal(band.width, 600);
+    assert.equal(band.height, 440);
+    const meta = await sharp(band.jpeg).metadata();
     assert.equal(meta.width, 600);
-    assert.equal(meta.height, 440);
+    assert.equal(meta.height, 600);
   }
   const wide = await encodeRgbJpegBands({ data, width: height, height: width, channels: 3 }, 600, 2, 0.1, 80);
-  const meta = await sharp(wide[0]!).metadata();
-  assert.equal(meta.width, 440);
-  assert.equal(meta.height, 600);
+  assert.deepEqual(wide[1]!.region, { x: 180, y: 0, width: 220, height: 300 });
+  assert.equal(wide[0]!.width, 440);
+  assert.equal(wide[0]!.height, 600);
+});
+
+test("a box on the second half's canvas lands on the capture where the half came from", () => {
+  // The second half of a 300x400 capture covers rows 180..400, scaled x2 onto a 600 canvas.
+  const band = { region: { x: 0, y: 180, width: 300, height: 220 }, width: 600, height: 440, edge: 600 };
+  // A box at canvas thousandths (100..300, 200..400) is band pixels (60..180, 120..240),
+  // capture pixels (30..90, 240..300): fractions x 0.1..0.3, y 0.6..0.75.
+  const mapped = bandBoxToImage({ x1: 0.1, y1: 0.2, x2: 0.3, y2: 0.4 }, band, 300, 400)!;
+  assert.ok(Math.abs(mapped.x1 - 0.1) < 1e-9 && Math.abs(mapped.x2 - 0.3) < 1e-9);
+  assert.ok(Math.abs(mapped.y1 - 0.6) < 1e-9 && Math.abs(mapped.y2 - 0.75) < 1e-9);
+  // A box in the padding below the half maps past the capture's bottom and is clamped, then refused as empty.
+  assert.equal(bandBoxToImage({ x1: 0.1, y1: 0.9, x2: 0.3, y2: 0.95 }, band, 300, 400), null);
 });

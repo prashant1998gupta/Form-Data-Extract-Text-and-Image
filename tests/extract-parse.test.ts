@@ -150,3 +150,14 @@ test("the photo box is read in the shapes a model reaches for, and is null other
   // An unreadable page carries no box, whatever the model put there.
   assert.equal(parseReaderReply(JSON.stringify({ readable: false, photo: [1, 2, 3, 4], fields: {} }), HOSPITAL_FORM).photoBox, null);
 });
+
+test("the picture the photo box refers to is read when given, and only with a box", () => {
+  const withPicture = parseReaderReply('{"readable": true, "photo": [100, 100, 300, 400], "photoPicture": "2", "fields": {}}', HOSPITAL_FORM);
+  assert.equal(withPicture.photoPicture, 2);
+  const noPicture = parseReaderReply('{"readable": true, "photo": [100, 100, 300, 400], "fields": {}}', HOSPITAL_FORM);
+  assert.equal(noPicture.photoPicture, null);
+  const nonsense = parseReaderReply('{"readable": true, "photo": [100, 100, 300, 400], "photoPicture": "the top one", "fields": {}}', HOSPITAL_FORM);
+  assert.equal(nonsense.photoPicture, null);
+  const noBox = parseReaderReply('{"readable": true, "photo": null, "photoPicture": 1, "fields": {}}', HOSPITAL_FORM);
+  assert.equal(noBox.photoPicture, null);
+});

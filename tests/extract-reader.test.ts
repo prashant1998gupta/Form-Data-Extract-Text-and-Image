@@ -14,7 +14,7 @@ import { readWithRetry, reasoningEffort, resolveReader } from "../lib/extract/re
  */
 
 const request: ReadRequest = {
-  imageJpegBase64: "aGVsbG8=",
+  imagesJpegBase64: ["aGVsbG8="],
   system: READER_SYSTEM_PROMPT,
   prompt: "Reply with the JSON object only.",
   timeoutMs: 5_000,
@@ -208,14 +208,14 @@ test("GROQ_REASONING takes the graded levels; unset or unrecognised means off", 
   }
 });
 
-test("enlarged parts of the page go to the model after the canvas, before the words", async () => {
+test("every picture goes to the model in order, before the words", async () => {
   let seenInit: RequestInit | undefined;
   const fetchImpl: typeof fetch = async (_url, init) => {
     seenInit = init;
     return new Response(JSON.stringify({ choices: [{ message: { content: "{}" }, finish_reason: "stop" }] }), { status: 200 });
   };
   const provider = groqProvider({ apiKey: "gsk_x", fetchImpl });
-  await provider.read({ imageJpegBase64: "AAAA", detailJpegBase64: ["BBBB", "CCCC"], system: "s", prompt: "the fields", timeoutMs: 1000 });
+  await provider.read({ imagesJpegBase64: ["AAAA", "BBBB", "CCCC"], system: "s", prompt: "the fields", timeoutMs: 1000 });
   const body = JSON.parse(String(seenInit?.body)) as { messages: [unknown, { content: ({ type: string; image_url?: { url: string }; text?: string })[] }] };
   const parts = body.messages[1].content;
   assert.deepEqual(parts.map((part) => part.type), ["image_url", "image_url", "image_url", "text"]);

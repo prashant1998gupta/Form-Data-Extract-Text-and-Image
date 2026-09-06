@@ -262,13 +262,33 @@ export async function encodeRgbJpegSquare(
   return { jpeg, width, height, edge };
 }
 
+/** One band of the capture as the model sees it: on its own square canvas, with where it came from. */
+export interface EncodedBand {
+  readonly jpeg: Buffer;
+  /** The part of the capture this band shows, in the capture's pixels. */
+  readonly region: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
+  /** The band's size on the canvas; it sits at the top-left, the rest is padding. */
+  readonly width: number;
+  readonly height: number;
+  readonly edge: number;
+}
+
 /**
  * The capture cut into overlapping bands along its long axis, each scaled to
- * `edge` on its own long side: the same page at about twice the magnification
- * the square canvas gives it. For reading, never for locating — nothing the
- * model says about a band is mapped back to the capture.
+ * `edge` on its own long side and set at the top-left of an `edge` square,
+ * exactly as `encodeRgbJpegSquare` treats the whole capture: the same page
+ * at about twice the magnification, and a box the model gives in thousandths
+ * of a band's canvas has one meaning, restated for the capture by
+ * `bandBoxToImage`.
  */
-export async function encodeRgbJpegBands(image: Rgb, edge: number, count = 2, overlap = 0.1, quality = 82): Promise<Buffer[]> {
+export async function encodeRgbJpegBands(
+  image: Rgb,
+  edge: number,
+  count = 2,
+  overlap = 0.1,
+  quality = 82,
+  background = { r: 118, g: 118, b: 118 },
+): Promise<EncodedBand[]> {
   const portrait = image.height >= image.width;
   const length = portrait ? image.height : image.width;
   const fraction = Math.min(1, (1 + overlap) / count);
@@ -276,21 +296,23 @@ export async function encodeRgbJpegBands(image: Rgb, edge: number, count = 2, ov
   const source = sharp(Buffer.from(image.data.buffer, image.data.byteOffset, image.data.byteLength), {
     raw: { width: image.width, height: image.height, channels: image.channels },
   });
-  const out: Buffer[] = [];
+  const out: EncodedBand[] = [];
   for (let i = 0; i < count; i += 1) {
     const start = count === 1 ? 0 : Math.round((i / (count - 1)) * (length - bandLength));
     const region = portrait
-      ? { left: 0, top: start, width: image.width, height: bandLength }
-      : { left: start, top: 0, width: bandLength, height: image.height };
+      ? { x: 0, y: start, width: image.width, height: bandLength }
+      : { x: start, y: 0, width: bandLength, height: image.height };
     const scale = edge / Math.max(region.width, region.height);
-    out.push(
-      await source
-        .clone()
-        .extract(region)
-        .resize(Math.max(1, Math.round(region.width * scale)), Math.max(1, Math.round(region.height * scale)), { fit: "fill", kernel: "lanczos3" })
-        .jpeg({ quality, mozjpeg: true })
-        .toBuffer(),
-    );
+    const width = Math.max(1, Math.round(region.width * scale));
+    const height = Math.max(1, Math.round(region.height * scale));
+    const jpeg = await source
+      .clone()
+      .extract({ left: region.x, top: region.y, width: region.width, height: region.height })
+      .resize(width, height, { fit: "fill", kernel: "lanczos3" })
+      .extend({ top: 0, left: 0, right: edge - width, bottom: edge - height, background })
+      .jpeg({ quality, mozjpeg: true })
+      .toBuffer();
+    out.push({ jpeg, region, width, height, edge });
   }
   return out;
 }

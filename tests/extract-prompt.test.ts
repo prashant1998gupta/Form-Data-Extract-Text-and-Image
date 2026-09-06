@@ -50,8 +50,9 @@ test("the reader is asked where the photograph is, in thousandths, and the skele
   assert.match(READER_SYSTEM_PROMPT, /0 to 1000/);
   assert.match(READER_SYSTEM_PROMPT, /null when no photograph/);
   const { user } = buildReaderPrompt(SCHOOL_FORM);
-  const skeleton = JSON.parse(user.split("\n").at(-1)!) as { photo: unknown };
+  const skeleton = JSON.parse(user.split("\n").at(-1)!) as { photo: unknown; photoPicture: unknown };
   assert.ok("photo" in skeleton);
+  assert.equal(skeleton.photoPicture, "1 or 2");
 });
 
 test("the reader is told the scripts the writing comes in, and to keep them", () => {
@@ -59,8 +60,9 @@ test("the reader is told the scripts the writing comes in, and to keep them", ()
   assert.match(READER_SYSTEM_PROMPT, /Never romanize, transliterate or translate/);
   assert.match(READER_SYSTEM_PROMPT, /struck through/);
   assert.match(READER_SYSTEM_PROMPT, /logo, emblem, icon or QR code is never the photograph/);
-  assert.match(READER_SYSTEM_PROMPT, /full square canvas of the FIRST picture/);
-  assert.match(READER_SYSTEM_PROMPT, /top and bottom halves/);
+  assert.match(READER_SYSTEM_PROMPT, /picture that shows the whole print/);
+  assert.match(READER_SYSTEM_PROMPT, /picture 1 is its top half/);
+  assert.match(READER_SYSTEM_PROMPT, /"photoPicture" is the number of that picture, 1 or 2/);
   const { user } = buildReaderPrompt(HOSPITAL_FORM);
   assert.ok(user.includes("in the script it is written in"));
 });

@@ -27,11 +27,13 @@ the photograph, nothing else.
    it to 3500 px on the long edge (300 dpi of A4, and inside Vercel's 4.5 MB
    body limit) and posts it once to `/api/extract`.
 3. **One model call reads everything.** The capture goes to Groq's vision
-   model with the form's field list; the reply is one JSON object with every
-   field and, alongside them, where the pasted photograph is as a box in
-   thousandths of the picture. No page straightening first: the model reads a
-   tilted page on a desk as well as a flat scan, and the box refers to the
-   picture as taken.
+   model as two enlarged, overlapping halves (the model sees each picture at
+   a bounded resolution, so halves read hurried handwriting that the whole
+   page does not) with the form's field list; the reply is one JSON object
+   with every field and, alongside them, where the pasted photograph is as a
+   box in thousandths of the half that shows it, which is restated for the
+   capture. No page straightening first: the model reads a tilted page on a
+   desk as well as a flat scan, and the box refers to the picture as taken.
 4. **The photograph is cut, never generated.** The model's box is good to
    about a tenth of the picture, so it is a place to search, not a crop. In
    a region several prints wide around it, the print is found as a block of
@@ -140,6 +142,11 @@ the editable form, the saved list — is generated from the definition.
 
 - **Reading needs a key.** The Groq call is the product; with no key the app
   is a form you fill by hand.
+- **Hindi handwriting is read only as well as the model can.** Answers in
+  Devanagari are returned in Devanagari, never romanized, but a hurried Hindi
+  hand is the hardest thing on a form: Groq's Qwen vision models read the
+  English fields and digits well and still misread, or invent, some Hindi
+  names. Check those against the paper before saving.
 - **The photograph must be visible in the picture.** It is cut where the
   model says it is; a picture that misses the top of the form yields the
   text but no photograph, and says so. A crop marked "check the crop" was cut
