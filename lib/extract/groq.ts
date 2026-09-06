@@ -59,7 +59,7 @@ export function groqProvider(options: GroqOptions): TextProvider {
             model,
             // Deterministic-as-available: transcription has one right answer.
             temperature: 0,
-            max_tokens: request.maxTokens ?? 4096,
+            max_tokens: request.maxTokens ?? 8192,
             reasoning_effort: options.reasoning ?? "none",
             response_format: { type: "json_object" },
             messages: [

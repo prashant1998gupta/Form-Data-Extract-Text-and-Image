@@ -36,8 +36,15 @@ export function resolveReader(env: Record<string, string | undefined>): Resolved
 /** The environment's word for how much thinking is allowed; off for anything unrecognised. */
 export function reasoningEffort(raw: string | undefined): ReasoningEffort {
   const value = raw?.trim();
-  return (REASONING_EFFORTS as readonly string[]).includes(value ?? "") ? (value as ReasoningEffort) : "none";
+  return (REASONING_EFFORTS as readonly string[]).includes(value ?? "") ? (value as ReasoningEffort) : DEFAULT_REASONING;
 }
+
+/**
+ * A little thinking by default: a hurried Devanagari hand is read better by
+ * a model that looks twice, and the graded levels bound the cost that
+ * "default" thinking does not. `GROQ_REASONING=none` turns it off.
+ */
+const DEFAULT_REASONING: ReasoningEffort = "low";
 
 export interface RetryOptions {
   /** Total attempts, including the first. */

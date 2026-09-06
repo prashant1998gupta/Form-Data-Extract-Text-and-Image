@@ -68,10 +68,11 @@ test("the Groq request carries the key, the model, JSON mode and the page image"
   };
   assert.equal(body.model, "qwen/qwen3.8-27b");
   assert.equal(body.temperature, 0);
-  assert.equal(body.max_tokens, 4096);
+  assert.equal(body.max_tokens, 8192);
   assert.equal(body.response_format.type, "json_object");
-  // Thinking is off: in JSON mode a reasoning model can spend the whole
-  // budget on thoughts and hand back an empty reply.
+  // A provider built without a reasoning setting thinks not at all: in JSON
+  // mode a reasoning model can spend the whole budget on thoughts and hand
+  // back an empty reply. The environment's default is decided in reader.ts.
   assert.equal((body as { reasoning_effort?: string }).reasoning_effort, "none");
   assert.equal(body.messages[0].role, "system");
   assert.equal(body.messages[1].content[0].image_url.url, "data:image/jpeg;base64,aGVsbG8=");
@@ -201,8 +202,8 @@ test("a refusal without a JSON body still carries the text", async () => {
   });
 });
 
-test("GROQ_REASONING takes the graded levels, and anything else means off", () => {
-  for (const [raw, expected] of [["low", "low"], ["high", "high"], ["default", "default"], [" none ", "none"], ["", "none"], ["yes", "none"], [undefined, "none"]] as const) {
+test("GROQ_REASONING takes the graded levels; unset or unrecognised means a little", () => {
+  for (const [raw, expected] of [["low", "low"], ["high", "high"], ["default", "default"], [" none ", "none"], ["", "low"], ["yes", "low"], [undefined, "low"]] as const) {
     assert.equal(reasoningEffort(raw), expected, `GROQ_REASONING=${String(raw)}`);
   }
 });

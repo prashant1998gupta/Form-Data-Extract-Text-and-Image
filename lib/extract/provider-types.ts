@@ -14,7 +14,8 @@ export interface ReadRequest {
   /**
    * Room for the reply. Generous by default: a school form's reply carries
    * fifty values, some paragraph-length, and a cap that truncates mid-JSON
-   * fails the whole scan as a format violation.
+   * fails the whole scan as a format violation. Thinking, when allowed,
+   * spends from the same budget.
    */
   readonly maxTokens?: number;
 }
