@@ -40,11 +40,11 @@ export function reasoningEffort(raw: string | undefined): ReasoningEffort {
 }
 
 /**
- * A little thinking by default: a hurried Devanagari hand is read better by
- * a model that looks twice, and the graded levels bound the cost that
- * "default" thinking does not. `GROQ_REASONING=none` turns it off.
+ * Off by default. Thinking was tried for a hurried Devanagari hand and did
+ * not read it better — the names came back invented either way — while
+ * every thought counts as output against the free tier's per-minute cap.
  */
-const DEFAULT_REASONING: ReasoningEffort = "low";
+const DEFAULT_REASONING: ReasoningEffort = "none";
 
 export interface RetryOptions {
   /** Total attempts, including the first. */

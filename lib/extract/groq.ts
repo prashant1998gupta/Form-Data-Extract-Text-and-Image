@@ -3,9 +3,12 @@
  *
  * Groq serves open vision models over an OpenAI-shaped REST endpoint; a raw
  * fetch is the whole integration and adds no dependency. The default model is
- * `qwen/qwen3.8-27b`, the newer of the two Qwen vision models Groq serves —
- * both Llama 4 vision models were retired in 2026 — and `GROQ_MODEL` changes
- * it without a deploy touching this file. `GROQ_BASE_URL` points the client at a
+ * `qwen/qwen3.6-27b`: Groq serves two Qwen vision models — both Llama 4
+ * vision models were retired in 2026 — and the newer `qwen/qwen3.8-27b` is
+ * capped on the free tier at 1,000 output tokens a minute, under one school
+ * form's reply, so every request to it is refused before it runs. It read
+ * no better on a Hindi hand where it did run. `GROQ_MODEL` changes the model
+ * without a deploy touching this file. `GROQ_BASE_URL` points the client at a
  * compatible endpoint (a proxy, or a local stand-in while developing).
  *
  * JSON mode (`response_format: {type: "json_object"}`) is supported with
@@ -15,7 +18,7 @@
 
 import { ProviderError, type ReadRequest, type TextProvider } from "./provider-types.ts";
 
-export const GROQ_DEFAULT_MODEL = "qwen/qwen3.8-27b";
+export const GROQ_DEFAULT_MODEL = "qwen/qwen3.6-27b";
 export const GROQ_DEFAULT_BASE_URL = "https://api.groq.com/openai/v1";
 
 export const REASONING_EFFORTS = ["none", "low", "medium", "high", "default"] as const;
@@ -30,8 +33,8 @@ export interface GroqOptions {
    * transcription has nothing to deliberate, and a reasoning model that
    * thinks in JSON mode can spend the entire output budget on thoughts and
    * hand Groq an empty reply — which Groq then refuses as invalid JSON. The
-   * graded levels exist for the models that take them (qwen3.8 does), when a
-   * hard hand is worth a little deliberation.
+   * graded levels exist for the models that take them (qwen3.8 does); note
+   * that thinking counts as output, against the free tier's per-minute cap.
    */
   readonly reasoning?: ReasoningEffort;
   /** Injection point for tests. Defaults to the platform fetch. */
@@ -59,7 +62,7 @@ export function groqProvider(options: GroqOptions): TextProvider {
             model,
             // Deterministic-as-available: transcription has one right answer.
             temperature: 0,
-            max_tokens: request.maxTokens ?? 8192,
+            max_tokens: request.maxTokens ?? 4096,
             reasoning_effort: options.reasoning ?? "none",
             response_format: { type: "json_object" },
             messages: [

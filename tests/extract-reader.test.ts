@@ -37,7 +37,7 @@ test("a key selects Groq; the model and base URL come from the environment", () 
   const resolved = resolveReader({ GROQ_API_KEY: "gsk_x", GROQ_MODEL: "some/other-model" });
   assert.equal(resolved.provider?.name, "groq");
   assert.equal(resolved.provider?.model, "some/other-model");
-  assert.equal(resolveReader({ GROQ_API_KEY: "gsk_x" }).provider?.model, "qwen/qwen3.8-27b");
+  assert.equal(resolveReader({ GROQ_API_KEY: "gsk_x" }).provider?.model, "qwen/qwen3.6-27b");
 });
 
 test("the Groq request carries the key, the model, JSON mode and the page image", async () => {
@@ -66,9 +66,9 @@ test("the Groq request carries the key, the model, JSON mode and the page image"
     response_format: { type: string };
     messages: [{ role: string; content: string }, { role: string; content: [{ image_url: { url: string } }, { text: string }] }];
   };
-  assert.equal(body.model, "qwen/qwen3.8-27b");
+  assert.equal(body.model, "qwen/qwen3.6-27b");
   assert.equal(body.temperature, 0);
-  assert.equal(body.max_tokens, 8192);
+  assert.equal(body.max_tokens, 4096);
   assert.equal(body.response_format.type, "json_object");
   // A provider built without a reasoning setting thinks not at all: in JSON
   // mode a reasoning model can spend the whole budget on thoughts and hand
@@ -202,8 +202,8 @@ test("a refusal without a JSON body still carries the text", async () => {
   });
 });
 
-test("GROQ_REASONING takes the graded levels; unset or unrecognised means a little", () => {
-  for (const [raw, expected] of [["low", "low"], ["high", "high"], ["default", "default"], [" none ", "none"], ["", "low"], ["yes", "low"], [undefined, "low"]] as const) {
+test("GROQ_REASONING takes the graded levels; unset or unrecognised means off", () => {
+  for (const [raw, expected] of [["low", "low"], ["high", "high"], ["default", "default"], [" none ", "none"], ["", "none"], ["yes", "none"], [undefined, "none"]] as const) {
     assert.equal(reasoningEffort(raw), expected, `GROQ_REASONING=${String(raw)}`);
   }
 });
