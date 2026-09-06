@@ -35,13 +35,16 @@ const MAX_BYTES = 25 * 1024 * 1024;
  */
 const READER_IMAGE_EDGE = 2000;
 /**
- * Alongside the canvas, the capture's top and bottom halves at the same edge:
- * the handwriting at about twice the magnification. Groq takes three images
- * per request, and the model appears to see each at a bounded resolution —
- * a page-cropped copy of the owner's school form read ten more fields than
- * the whole picture — so the resolution the reader gets comes from splitting.
+ * Enlarged halves of the capture sent alongside the canvas (0 = none). Groq
+ * takes three images per request, and the model appears to see each at a
+ * bounded resolution — a page-cropped copy of the owner's school form read a
+ * few more fields than the whole picture. But three 2000 px JPEGs overrun
+ * Groq's request size ("the page image was too large", HTTP 413) and the
+ * gain on qwen3.6 was two fields of forty-one, so the halves are off until
+ * a smaller encoding is measured. The plumbing (`encodeRgbJpegBands`,
+ * `detailJpegBase64`) stays.
  */
-const READER_DETAIL_BANDS = 2;
+const READER_DETAIL_BANDS = 0;
 const READER_DETAIL_OVERLAP = 0.1;
 const READER_TIMEOUT_MS = 40_000;
 
@@ -157,11 +160,11 @@ export async function POST(request: Request): Promise<Response> {
 async function readCapture(decoded: DecodedImage, form: FormDefinition, provider: TextProvider) {
   const started = performance.now();
   const canvas = await encodeRgbJpegSquare(decoded.rgb, READER_IMAGE_EDGE, 85);
-  const bands = await encodeRgbJpegBands(decoded.rgb, READER_IMAGE_EDGE, READER_DETAIL_BANDS, READER_DETAIL_OVERLAP, 85);
+  const bands = READER_DETAIL_BANDS > 0 ? await encodeRgbJpegBands(decoded.rgb, READER_IMAGE_EDGE, READER_DETAIL_BANDS, READER_DETAIL_OVERLAP, 85) : [];
   const prompt = buildReaderPrompt(form);
   const text = await readWithRetry(provider, {
     imageJpegBase64: canvas.jpeg.toString("base64"),
-    detailJpegBase64: bands.map((band) => band.toString("base64")),
+    detailJpegBase64: bands.length ? bands.map((band) => band.toString("base64")) : undefined,
     system: prompt.system,
     prompt: prompt.user,
     timeoutMs: READER_TIMEOUT_MS,
