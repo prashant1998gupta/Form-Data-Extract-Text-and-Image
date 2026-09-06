@@ -224,6 +224,8 @@ const MIN_BLOCK_CONTENT = 0.55;
 const MIN_HINT_CONTENT = 0.2;
 /** A block that spans this much of the reader's box on an axis is believed on that axis; a shorter one is merged with the box. */
 const BLOCK_SPANS_BOX = 0.8;
+/** How far past the declared shape a merged extent may go before it is trimmed about the block's centre. */
+const MERGED_SHAPE_ALLOWANCE = 1.15;
 /** ...and carries the tonal range of a photograph rather than a logo or a code (`toneSpread`, 0..1). */
 const MIN_BLOCK_TONE_SPREAD = 0.2;
 /** A block is cut a little generous, so a tight box does not shave the print. */
@@ -287,7 +289,7 @@ export async function locatePhoto(
   const block = search.candidates.find((candidate) => candidate.content >= MIN_BLOCK_CONTENT && candidate.photoLike);
   let cutRect: Rect | null = null;
   if (block) {
-    cutRect = mergeExtents(block.rect, hint);
+    cutRect = mergeExtents(block.rect, hint, spec.sizeMM.widthMM / spec.sizeMM.heightMM);
     if (iou(cutRect, block.rect) < 0.95) {
       const attempt = await measureAt(analysis, cutRect, spec, options, "at the print's likely extent", HINT_EDGE_PRIOR, MIN_OVERLAP_WITH_ROUGH_BOX);
       options.debug?.("merged", { rect: cutRect, ...(attempt.found ? { measured: attempt.photo.sourceRect } : { refused: attempt.detail }) });
@@ -1042,11 +1044,29 @@ function clip(rect: Rect, image: Rgb): Rect {
 /**
  * The block and the reader's box, reconciled per axis: the block where it
  * spans most of the box, their union where it does not — which is what a
- * pale backdrop leaves of a print in the block.
+ * pale backdrop leaves of a print in the block. A union is then held to the
+ * print's declared shape: a box that took in the printed frame beside the
+ * print, or a run of letterhead, is wider than any print of that height
+ * could be, and the excess is trimmed about the block's centre — a face is
+ * in the middle of a passport print, so the block's centre is the print's.
  */
-function mergeExtents(block: Rect, hint: Rect): Rect {
+function mergeExtents(block: Rect, hint: Rect, declaredAspect: number): Rect {
   const x = block.width >= BLOCK_SPANS_BOX * hint.width ? { x: block.x, width: block.width } : union1(block.x, block.width, hint.x, hint.width);
   const y = block.height >= BLOCK_SPANS_BOX * hint.height ? { x: block.y, width: block.height } : union1(block.y, block.height, hint.y, hint.height);
+  const widest = y.width * declaredAspect * MERGED_SHAPE_ALLOWANCE;
+  if (x.width > widest) {
+    const centre = block.x + block.width / 2;
+    const start = Math.min(Math.max(x.x, centre - widest / 2), x.x + x.width - widest);
+    x.x = Math.round(start);
+    x.width = Math.round(widest);
+  }
+  const tallest = (x.width / declaredAspect) * MERGED_SHAPE_ALLOWANCE;
+  if (y.width > tallest) {
+    const centre = block.y + block.height / 2;
+    const start = Math.min(Math.max(y.x, centre - tallest / 2), y.x + y.width - tallest);
+    y.x = Math.round(start);
+    y.width = Math.round(tallest);
+  }
   return { x: x.x, y: y.x, width: x.width, height: y.width };
 }
 
